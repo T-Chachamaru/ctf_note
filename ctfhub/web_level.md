@@ -1047,3 +1047,220 @@ phpinfo看一下,发现禁了iconv函数,但我们还能用iconv_strlen函数
 ![bypass iconv 2 1](/ctfhub/images/iconv7.png)
 继续改一改payload就没问题
 ![bypass iconv 2 2](/ctfhub/images/iconv8.png)
+
+Linux
+1.动态加载器
+Linux ELF Dynaamic Loader,即Linux ELF动态加载器。动态加载是一种机制,通过该机制,计算机程序可以在运行时将库(或其他二进制)加载到存储器中,检索包含在库中的函数和变量的地址,执行那些函数或访问那些变量,以及从存储器中卸载库。它是计算机程序使用其他软件的三种机制之一,另外两种是静态链接和动态链接。与静态链接和动态链接不同,动态加载允许计算机程序在缺少这些库的情况下启动,以发现可用的库,并潜在地获得附加功能。
+而在Linux中,通过readelf -e命令查看执行文件,可以从Program Headers中看到文件类型信息,其中Requesting program interpreter: /lib64/ld-linux-x86-64.so.2指明该文件使用的是动态加载,还可以用ldd命令查看文件依赖关系。
+/lib64/ld-linux-x86-64.so.2则是Linux中用于64位ELF可执行文件的动态链接器。它加载可执行文件,解析并加载程序依赖的动态库,设置内存布局,同时还将控制权交给程序的入口点。它本身是一个可执行文件,具有执行权限,不仅可以由内核自动调用,也可以手动调用。当直接运行动态链接器并传递一个ELF文件作为参数时,动态链接器会读取文件的ELF头,解析其依赖和入口点,加载所有需要的动态库并执行ELF文件的代码。
+-
+连接到webshell,可以看到flag文件是644权限,不具备执行权限。
+![动态加载器 1](/ctfhub/images/linux1.png)
+通常,内核在执行可执行文件时,会首先检查文件权限,如果权限不足,则会拒绝执行。但通过/lib64/ld-linux-x86-64.so.2执行flag文件,实际执行的是动态链接器,readflag只是作为参数传递。动态链接器加载ELF文件只需要读取权限,而不需要目标文件有执行权限,
+![动态加载器 2](/ctfhub/images/linux2.png)
+本质上在执行./readflag时,shell会调用execve来执行这个程序,此时,内核会检查程序权限并调用动态链接器,如果权限不足则拒绝执行。但通过直接手动调用动态链接器则跳过了内核的权限检查
+
+JSON Web Token
+什么是JWT
+Json Web Token (JWT),是为了在网络应用环境间传递声明而执行的一种基于JSON的开放标准（[RFC 7519](https://tools.ietf.org/html/rfc7519)。
+该token被设计为紧凑且安全的,特别适用于分布式站点的单点登录（SSO）场景,是目前最流行的跨域认证解决方案。JWT的声明一般被用来在身份提供者和服务提供者间传递被认证的用户身份信息,以便于从资源服务器获取资源,也可以增加一些额外的其它业务逻辑所必须的声明信息,该token也可直接被用于认证,也可被加密。
+JWT的原理
+JWT的原理是,服务器认证以后,生成一个JSON对象,发回给用户,就像下面这样。
+```JSON
+{
+  "姓名": "张三",
+  "角色": "管理员",
+  "到期时间": "2018年7月1日0点0分"
+}
+```
+以后,用户与服务端通信的时候,都要发回这个JSON对象。服务器完全只靠这个对象认定用户身份。为了防止用户篡改数据,服务器在生成这个对象的时候,会加上签名（详见后文）。
+服务器就不保存任何session数据了,也就是说,服务器变成无状态了,从而比较容易实现扩展。
+JWT的数据结构
+实际当中JWT长这个样子:
+```text
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkNURkh1YiIsImlhdCI6MTUxNjIzOTAyMn0.Y2PuC-D6SfCRpsPN19_1Sb4WPJNkJr7lhG6YzA8-9OQ
+```
+它是一个很长的字符串,中间用点（.）分隔成三个部分。注意,JWT内部是没有换行的
+JWT的三个部分依次如下:
+- Header（头部）
+- Payload（负载）
+- Signature（签名）
+写成一行，就是下面的样子。
+```text
+Header.Payload.Signature
+```
+每个部分最后都会使用base64URLEncode方式进行编码
+```Python
+#!/usr/bin/env python
+function base64url_encode($data) {
+    return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+} 
+```
+Header
+Header部分是一个JSON对象,描述JWT的元数据,以上面的例子,使用base64decode之后:
+```text
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
+```
+```JSON
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+```
+header部分最常用的两个字段是alg和typ。
+alg属性表示token签名的算法(algorithm),最常用的为HMAC和RSA算法
+typ属性表示这个token的类型（type）,JWT令牌统一写为JWT。
+Payload
+Payload部分也是一个JSON对象,用来存放实际需要传递的数据。JWT规定了7个官方字段供选用。
+- iss (issuer)：签发人
+- exp (expiration time)：过期时间
+- sub (subject)：主题
+- aud (audience)：受众
+- nbf (Not Before)：生效时间
+- iat (Issued At)：签发时间
+- jti (JWT ID)：编号
+除了官方字段,还可以在这个部分定义私有字段,以上面的例子为例,将payload部分解base64之后:
+```text
+eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkNURkh1YiIsImlhdCI6MTUxNjIzOTAyMn0
+```
+```JSON
+{
+  "sub": "1234567890",
+  "name": "CTFHub",
+  "iat": 1516239022
+}
+```
+注意:JWT默认是不会对Payload加密的,也就意味着任何人都可以读到这部分JSON的内容,所以不要将私密的信息放在这个部分
+Signature
+Signature部分是对前两部分的签名,防止数据篡改
+首先,需要指定一个密钥（secret）。这个密钥只有服务器才知道,不能泄露给用户。然后,使用Header里面指定的签名算法（默认是 HMAC SHA256）,按照下面的公式产生签名。
+```JSON
+HMACSHA256(
+  base64UrlEncode(header) + "." +
+  base64UrlEncode(payload),
+  secret)
+```
+算出签名以后,把Header、Payload、Signature三个部分拼成一个字符串,每个部分之间用"点"（.）分隔,就可以返回给用户。
+
+1.敏感信息泄露
+抓包获得token
+![敏感信息泄露 1](/ctfhub/images/jwt1.png)
+JWT的header与payload默认不加密,使用base64编码,如果将敏感信息存储在其中很容易造成敏感信息泄露
+![敏感信息泄露 2](/ctfhub/images/jwt2.png)
+
+2.无签名
+无签名,即不使用签名算法,当alg字段为空时,后端将不执行签名验证。因此抓包获取token
+![无签名 1](/ctfhub/images/jwt3.png)
+解码header和payload,将其中的alg字段改为none,再重新base64编码回去
+![无签名 2](/ctfhub/images/jwt4.png)
+重发修改后的包
+![无签名 3](/ctfhub/images/jwt5.png)
+
+3.弱密钥
+jwt利用工具有jwt_tool(验证、伪造和破解JWT令牌)、jwt-cracker(破解HS256密钥JWT)、c-jwt-cracker等等。
+因此我们可以使用jwt-cracker来破解对称加密的JWT令牌。
+首先抓包获取token
+![弱密钥 1](/ctfhub/images/jwt6.png)
+使用jwt-cracker破解密钥
+![弱密钥 2](/ctfhub/images/jwt7.png)
+通过密钥修改包
+![弱密钥 3](/ctfhub/images/jwt8.png)
+重发包获得flag
+![弱密钥 4](/ctfhub/images/jwt9.png)
+
+4.修改签名算法
+有些JWT库支持多种密码算法进行签名、验签。若目标使用非对称密码算法时,有时攻击者可以获取到公钥
+此时可通过修改JWT头部的签名算法,将非对称密码算法改为对称密码算法,从而达到攻击者目的。
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+        <title>CTFHub JWTDemo</title>
+        <link rel="stylesheet" href="/static/style.css" />
+    </head>
+    <body>
+        <main id="content">
+            <header>Web Login</header>
+            <form id="login-form" method="POST">
+                <input type="text" name="username" placeholder="Username" />
+                <input type="password" name="password" placeholder="Password" />
+                <input type="submit" name="action" value="Login" />
+            </form>
+            <a href="/publickey.pem">publickey.pem</a>
+        </main>
+        <?php echo $_COOKIE['token'];?>
+        <hr/>
+    </body>
+</html>
+
+<?php
+require __DIR__ . '/vendor/autoload.php';
+use \Firebase\JWT\JWT;
+
+class JWTHelper {
+  public static function encode($payload=array(), $key='', $alg='HS256') {
+    return JWT::encode($payload, $key, $alg);
+  }
+  public static function decode($token, $key, $alg='HS256') {
+    try{
+            $header = JWTHelper::getHeader($token);
+            $algs = array_merge(array($header->alg, $alg));
+      return JWT::decode($token, $key, $algs);
+    } catch(Exception $e){
+      return false;
+    }
+    }
+    public static function getHeader($jwt) {
+        $tks = explode('.', $jwt);
+        list($headb64, $bodyb64, $cryptob64) = $tks;
+        $header = JWT::jsonDecode(JWT::urlsafeB64Decode($headb64));
+        return $header;
+    }
+}
+
+$FLAG = getenv("FLAG");
+$PRIVATE_KEY = file_get_contents("/privatekey.pem");
+$PUBLIC_KEY = file_get_contents("./publickey.pem");
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!empty($_POST['username']) && !empty($_POST['password'])) {
+        $token = "";
+        if($_POST['username'] === 'admin' && $_POST['password'] === $FLAG){
+            $jwt_payload = array(
+                'username' => $_POST['username'],
+                'role'=> 'admin',
+            );
+            $token = JWTHelper::encode($jwt_payload, $PRIVATE_KEY, 'RS256');
+        } else {
+            $jwt_payload = array(
+                'username' => $_POST['username'],
+                'role'=> 'guest',
+            );
+            $token = JWTHelper::encode($jwt_payload, $PRIVATE_KEY, 'RS256');
+        }
+        @setcookie("token", $token, time()+1800);
+        header("Location: /index.php");
+        exit();
+    } else {
+        @setcookie("token", "");
+        header("Location: /index.php");
+        exit();
+    }
+} else {
+    if(!empty($_COOKIE['token']) && JWTHelper::decode($_COOKIE['token'], $PUBLIC_KEY) != false) {
+        $obj = JWTHelper::decode($_COOKIE['token'], $PUBLIC_KEY);
+        if ($obj->role === 'admin') {
+            echo $FLAG;
+        }
+    } else {
+        show_source(__FILE__);
+    }
+}
+?>
+打开题目可以看到有一段代码审计,大意是根据JWT的role来决定是否输出flag。同时$algs = array_merge(array($header->alg, $alg));
+这段代码允许头部指定加密算法,默认算法是RS256,如果头部指定其他算法,服务器也会接受。因此可以伪造JWT
+python jwt_tool.py -I -hc "alg:HS256" -pc "username:admin,role:admin" -k publickey.pem
+![修改签名算法 1](/ctfhub/images/jwt10.png)
+重发包获得flag
+![修改签名算法 2](/ctfhub/images/jwt11.png)
