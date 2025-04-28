@@ -221,3 +221,4 @@
     ![Phar反序列化2 3](/hello_ctf/images/ser30.png) (存在可控的文件操作函数，这里是 `file_exists`)
     ![Phar反序列化2 4](/hello_ctf/images/ser31.png) (上传构造好的 Phar 文件，后缀改为 `.png`)
     ![Phar反序列化2 5](/hello_ctf/images/ser32.png) (通过 `phar://` 伪协议调用上传的文件，触发反序列化)
+*   **注**: phar文件还可以用 `compress.zlib://phar://` 伪协议触发反序列化
