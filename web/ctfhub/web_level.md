@@ -148,11 +148,11 @@ PHP 的 `php.ini` 配置文件中的 `disable_functions` 指令允许管理员�
         ```
     4.  **执行:** 上传 `evil.so` 和 `trigger.php` 到 Web 服务器的可写目录，然后访问 `trigger.php?cmd=ls -al /`。
 *   **CTFHUB 示例 (CTFHUB Example):**
-    ![LD_PRELOAD 1](/ctfhub/images/web1.png)
+    ![LD_PRELOAD 1](./images/web1.png)
     (蚁剑连接)
-    ![LD_PRELOAD 2](/ctfhub/images/web2.png)
+    ![LD_PRELOAD 2](./images/web2.png)
     (上传 `evil.so` 和 `trigger.php`，然后访问 `trigger.php?cmd=tac /flag`)
-    ![LD_PRELOAD 3](/ctfhub/images/web3.png)
+    ![LD_PRELOAD 3](./images/web3.png)
     (获取 Flag)
 *   **注意事项 (Considerations):** 需要 `putenv` 和一个能 fork 子进程的函数。蚁剑等工具有自动化此过程的插件。
 
@@ -218,11 +218,11 @@ PHP 的 `php.ini` 配置文件中的 `disable_functions` 指令允许管理员�
         ```
     3.  **执行:** 上传此 PHP 文件，访问 `shellshock_trigger.php?cmd=id`。
 *   **CTFHUB 示例 (CTFHUB Example):**
-    ![ShellShock 1](/ctfhub/images/web4.png)
+    ![ShellShock 1](./images/web4.png)
     (提供蚁剑连接信息)
-    ![ShellShock 2](/ctfhub/images/web5.png)
+    ![ShellShock 2](./images/web5.png)
     (上传上述 PHP Payload，并访问 `payload.php?cmd=tac /flag`)
-    ![ShellShock 3](/ctfhub/images/web6.png)
+    ![ShellShock 3](./images/web6.png)
     (获取 Flag)
 
 ### 4. Apache Mod CGI
@@ -257,9 +257,9 @@ PHP 的 `php.ini` 配置文件中的 `disable_functions` 指令允许管理员�
     3.  通过 WebShell 给 `shell.wors` 添加执行权限: `chmod +x shell.wors`。
     4.  在浏览器中访问 `http://target.com/path/to/shell.wors`。
 *   **CTFHUB 示例 (CTFHUB Example):**
-    ![Apache Mod CGI 1](/ctfhub/images/web7.png)
+    ![Apache Mod CGI 1](./images/web7.png)
     (蚁剑连接，可查看 `phpinfo` 确认 Apache、mod_cgi、AllowOverride 等信息)
-    ![Apache Mod CGI 2](/ctfhub/images/web8.png)
+    ![Apache Mod CGI 2](./images/web8.png)
     (上传 `.htaccess` 和 `shell.wors`，并执行 `chmod +x shell.wors`)
     (访问 `shell.wors` 文件获取 Flag - 截图缺失)
 
@@ -293,11 +293,11 @@ PHP 的 `php.ini` 配置文件中的 `disable_functions` 指令允许管理员�
 *   **CTFHUB 示例 (利用已有 Webshell 和插件):**
     *   **原理:** 某些 WebShell 管理工具（如蚁剑）的绕过 `disable_functions` 插件利用了 PHP-FPM。它们通过已有的 WebShell 上传一个恶意的 PHP 扩展 (`.so`)，然后利用 PHP-FPM 加载这个扩展，启动一个新的、没有 `disable_functions` 限制的 PHP 进程（或修改当前 FPM worker 配置），并将后续的命令执行请求通过代理转发到这个“干净”的 PHP 环境执行。
     *   **条件:** 需要 WebShell，目标使用 PHP-FPM，存在可写目录上传 `.so`。
-    ![PHP-FPM 1](/ctfhub/images/web9.png)
+    ![PHP-FPM 1](./images/web9.png)
     (蚁剑连接)
-    ![PHP-FPM 2](/ctfhub/images/web10.png)
+    ![PHP-FPM 2](./images/web10.png)
     (使用蚁剑的 PHP-FPM/FastCGI 绕过插件)
-    ![PHP-FPM 3](/ctfhub/images/web11.png)
+    ![PHP-FPM 3](./images/web11.png)
     (成功执行命令获取 Flag)
 
 ### 6. GC UAF (PHP 7.0-7.3 垃圾回收器漏洞 - CVE-2016-5771 / Bug #72530)
@@ -319,11 +319,11 @@ PHP 的 `php.ini` 配置文件中的 `disable_functions` 指令允许管理员�
     *   上传该 PHP 文件到目标服务器。
     *   通过 Web 访问该 PHP 文件触发漏洞利用。
 *   **CTFHUB 示例 (CTFHUB Example):**
-    ![GC UAF 1](/ctfhub/images/web12.png)
+    ![GC UAF 1](./images/web12.png)
     (蚁剑连接)
-    ![GC UAF 2](/ctfhub/images/web13.png)
+    ![GC UAF 2](./images/web13.png)
     (上传修改好命令的 `gc_uaf_exploit.php`)
-    ![GC UAF 3](/ctfhub/images/web14.png)
+    ![GC UAF 3](./images/web14.png)
     (访问 exploit 文件获取 Flag)
 *   **注意事项 (Considerations):** UAF 漏洞利用通常对特定 PHP 版本和环境敏感，可能不稳定。
 
@@ -343,11 +343,11 @@ PHP 的 `php.ini` 配置文件中的 `disable_functions` 指令允许管理员�
     *   上传 PHP 文件到目标服务器。
     *   访问该 PHP 文件触发利用。
 *   **CTFHUB 示例 (CTFHUB Example):**
-    ![Json Serialization UAF 1](/ctfhub/images/web15.png)
+    ![Json Serialization UAF 1](./images/web15.png)
     (蚁剑连接)
-    ![Json Serialization UAF 2](/ctfhub/images/web16.png)
+    ![Json Serialization UAF 2](./images/web16.png)
     (上传修改好命令的 `json_uaf_exploit.php`)
-    ![Json Serialization UAF 3](/ctfhub/images/web17.png)
+    ![Json Serialization UAF 3](./images/web17.png)
     (访问 exploit 文件获取 Flag)
 *   **注意事项 (Considerations):** 同 UAF 漏洞，可能不稳定，依赖特定环境。
 
@@ -369,11 +369,11 @@ PHP 的 `php.ini` 配置文件中的 `disable_functions` 指令允许管理员�
     *   上传 PHP 文件。
     *   访问该 PHP 文件。
 *   **CTFHUB 示例 (CTFHUB Example):**
-    ![Backtrace UAF 1](/ctfhub/images/web18.png)
+    ![Backtrace UAF 1](./images/web18.png)
     (蚁剑连接)
-    ![Backtrace UAF 2](/ctfhub/images/web19.png)
+    ![Backtrace UAF 2](./images/web19.png)
     (上传修改好命令的 `backtrace_uaf_exploit.php`)
-    ![Backtrace UAF 3](/ctfhub/images/web20.png)
+    ![Backtrace UAF 3](./images/web20.png)
     (访问 exploit 文件获取 Flag)
 *   **注意事项 (Considerations):** 同 UAF 漏洞。
 
@@ -424,11 +424,11 @@ PHP 的 `php.ini` 配置文件中的 `disable_functions` 指令允许管理员�
     ?>
     ```
 *   **CTFHUB 示例 (CTFHUB Example):**
-    ![FFI扩展 1](/ctfhub/images/web21.png)
+    ![FFI扩展 1](./images/web21.png)
     (蚁剑连接)
-    ![FFI扩展 2](/ctfhub/images/web22.png)
+    ![FFI扩展 2](./images/web22.png)
     (上传上述 FFI exploit PHP 文件)
-    ![FFI扩展 3](/ctfhub/images/web23.png)
+    ![FFI扩展 3](./images/web23.png)
     (访问 exploit 文件，通过 GET 参数传递命令，如 `?cmd=tac /flag`)
 
 ### 10. iconv (GCONV_PATH 环境变量 - Linux)
@@ -511,24 +511,24 @@ PHP 的 `php.ini` 配置文件中的 `disable_functions` 指令允许管理员�
         ```
     4.  访问 `iconv_trigger.php?cmd=ls -al /`。
 *   **CTFHUB 示例 (CTFHUB Example):**
-    ![iconv 1](/ctfhub/images/iconv1.png)
+    ![iconv 1](./images/iconv1.png)
     (上传 `gconv-modules` 到 `/tmp`)
-    ![iconv 2](/ctfhub/images/iconv2.png)
+    ![iconv 2](./images/iconv2.png)
     (上传编译好的 `pwn.so` 到 `/tmp`)
-    ![iconv 3](/ctfhub/images/iconv3.png)
+    ![iconv 3](./images/iconv3.png)
     (上传 `iconv_trigger.php`)
-    ![iconv 4](/ctfhub/images/iconv4.png)
+    ![iconv 4](./images/iconv4.png)
     (访问 `iconv_trigger.php?cmd=tac /flag` 获取 Flag)
 
 *   **Bypass iconv 1 (使用 `iconv_strlen`):**
     *   **原理:** 如果 `iconv` 被禁，但 `iconv_strlen` 未被禁，`iconv_strlen` 同样会调用底层的 `iconv_open`，可以用来触发漏洞。
-    ![bypass iconv 1 1](/ctfhub/images/iconv5.png) (phpinfo 显示 `iconv` 被禁，`iconv_strlen` 可用)
+    ![bypass iconv 1 1](./images/iconv5.png) (phpinfo 显示 `iconv` 被禁，`iconv_strlen` 可用)
     *   **修改 Payload:** 将 `iconv_trigger.php` 中的 `iconv("PWN", "UTF-8", "test");` 替换为 `@iconv_strlen("test", "PWN");`。
-    ![bypass iconv 1 2](/ctfhub/images/iconv6.png) (修改后的触发代码)
+    ![bypass iconv 1 2](./images/iconv6.png) (修改后的触发代码)
 
 *   **Bypass iconv 2 (使用 Stream Filter `convert.iconv.*`):**
     *   **原理:** 如果 `iconv` 和 `iconv_strlen` 都被禁，PHP 的流过滤器 `convert.iconv.*`（例如用于 `file_get_contents` 或 `fopen`）在处理数据时也会调用底层的 `iconv` 实现，同样可以触发 `GCONV_PATH` 机制。
-    ![bypass iconv 2 1](/ctfhub/images/iconv7.png) (phpinfo 显示 `iconv` 相关函数被大量禁用)
+    ![bypass iconv 2 1](./images/iconv7.png) (phpinfo 显示 `iconv` 相关函数被大量禁用)
     *   **修改 Payload:** 将 `iconv_trigger.php` 中的触发部分替换为使用流过滤器，例如：
         ```php
         // Trigger using file_get_contents with convert.iconv filter
@@ -540,7 +540,7 @@ PHP 的 `php.ini` 配置文件中的 `disable_functions` 指令允许管理员�
              die("file_get_contents function is disabled.");
         } 
         ```
-    ![bypass iconv 2 2](/ctfhub/images/iconv8.png) (修改后的触发代码)
+    ![bypass iconv 2 2](./images/iconv8.png) (修改后的触发代码)
 
 ---
 
@@ -567,9 +567,9 @@ PHP 的 `php.ini` 配置文件中的 `disable_functions` 指令允许管理员�
         ```
         (将 `./readflag` 替换为实际的目标文件路径)
 *   **CTFHUB 示例 (CTFHUB Example):**
-    ![动态加载器 1](/ctfhub/images/linux1.png)
+    ![动态加载器 1](./images/linux1.png)
     (WebShell 中看到 `readflag` 文件权限为 `644`，没有执行权限)
-    ![动态加载器 2](/ctfhub/images/linux2.png)
+    ![动态加载器 2](./images/linux2.png)
     (通过直接调用 `/lib64/ld-linux-x86-64.so.2 ./readflag` 成功执行并获取 Flag)
 *   **注意事项 (Considerations):**
     *   动态加载器的路径可能因系统架构 (32/64 位) 和发行版而异。
@@ -642,9 +642,9 @@ JSON Web Token (JWT) 是一种基于 JSON 的开放标准 (RFC 7519)，用于在
     3.  取第二部分 (Payload)，进行 Base64Url 解码即可读取其中的 JSON 数据。
     4.  查找是否有敏感信息。
 *   **示例 (CTFHUB Example):**
-    ![敏感信息泄露 1](/ctfhub/images/jwt1.png)
+    ![敏感信息泄露 1](./images/jwt1.png)
     (抓包获取 Cookie 中的 Token)
-    ![敏感信息泄露 2](/ctfhub/images/jwt2.png)
+    ![敏感信息泄露 2](./images/jwt2.png)
     (解码 Payload 部分，发现敏感信息，可能是 Flag 或用于后续步骤)
 
 ### 2. 签名未验证 / 算法置空 (Signature Not Verified / Algorithm `None`)
@@ -658,11 +658,11 @@ JSON Web Token (JWT) 是一种基于 JSON 的开放标准 (RFC 7519)，用于在
     5.  将编码后的 Header 和 Payload 用点 (`.`) 连接起来，**并将第三部分 (Signature) 删除或置为空字符串** (即 `encodedHeader.encodedPayload.` 或 `encodedHeader.encodedPayload`)。
     6.  使用这个伪造的 Token 替换原始 Token 发送给服务器。
 *   **示例 (CTFHUB Example):**
-    ![无签名 1](/ctfhub/images/jwt3.png)
+    ![无签名 1](./images/jwt3.png)
     (抓包获取原始 Token)
-    ![无签名 2](/ctfhub/images/jwt4.png)
+    ![无签名 2](./images/jwt4.png)
     (解码 Header 改 `alg` 为 `none`，解码 Payload 改 `role` 为 `admin`，重新编码并移除签名部分)
-    ![无签名 3](/ctfhub/images/jwt5.png)
+    ![无签名 3](./images/jwt5.png)
     (重放修改后的 Token，获得 Admin 权限或 Flag)
 
 ### 3. 弱密钥爆破 (Weak Secret Brute-force - HS256)
@@ -674,13 +674,13 @@ JSON Web Token (JWT) 是一种基于 JSON 的开放标准 (RFC 7519)，用于在
     3.  **命令示例 (jwt-cracker):** `jwt-cracker <token> -a HS256 -d <dictionary_file>`
     4.  一旦破解出密钥，攻击者就可以使用该密钥任意伪造 Token：修改 Payload（例如提升权限），然后用找到的密钥重新计算签名。
 *   **示例 (CTFHUB Example):**
-    ![弱密钥 1](/ctfhub/images/jwt6.png)
+    ![弱密钥 1](./images/jwt6.png)
     (抓包获取 HS256 Token)
-    ![弱密钥 2](/ctfhub/images/jwt7.png)
+    ![弱密钥 2](./images/jwt7.png)
     (使用 `jwt-cracker` 和字典爆破出密钥)
-    ![弱密钥 3](/ctfhub/images/jwt8.png)
+    ![弱密钥 3](./images/jwt8.png)
     (使用找到的密钥和 `jwt_tool` 或在线工具，修改 Payload 中 `role` 为 `admin` 并重新生成签名，构造完整 Token)
-    ![弱密钥 4](/ctfhub/images/jwt9.png)
+    ![弱密钥 4](./images/jwt9.png)
     (重放伪造的 Token 获取 Flag)
 
 ### 4. 签名算法篡改 (Algorithm Confusion / Substitution Attack - RS256 to HS256)
@@ -726,9 +726,9 @@ JSON Web Token (JWT) 是一种基于 JSON 的开放标准 (RFC 7519)，用于在
         // ...
         ```
         代码显示 `decode` 函数接受头部指定的算法，并且总是使用 `$PUBLIC_KEY` 来验证，这正是漏洞所在。
-    ![修改签名算法 1](/ctfhub/images/jwt10.png)
+    ![修改签名算法 1](./images/jwt10.png)
     (使用 `jwt_tool`，将算法改为 `HS256`，修改 payload，并使用 `publickey.pem` 作为 HS256 的密钥进行签名)
-    ![修改签名算法 2](/ctfhub/images/jwt11.png)
+    ![修改签名算法 2](./images/jwt11.png)
     (重放伪造的 Token 获得 Flag)
 
 ## 注意事项 (Considerations)
