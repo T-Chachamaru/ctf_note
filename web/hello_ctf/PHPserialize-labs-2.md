@@ -1,6 +1,6 @@
-# php_ser_Class
+# PHPserialize-labs-2
 
-## 工作原理 (Working Principle - Continued)
+## 工作原理
 
 本部分重点关注具体技术的原理：
 
@@ -12,9 +12,9 @@
 4.  **Session 反序列化:** PHP Session 数据默认存储时会经过序列化。`session.serialize_handler` 配置项决定了序列化格式（常见有 `php`, `php_serialize`）。如果应用在不同页面使用了不同的 handler 来读写同一个 Session 文件，攻击者可以通过在一个页面注入特殊构造的数据（利用 `php` 格式的 `|` 分隔符），使得另一个页面以不同的 handler 读取时错误地解析，导致反序列化攻击。
 5.  **Phar 反序列化:** `phar://` 伪协议用于访问 Phar 归档文件。当 PHP 使用文件系统函数（如 `file_exists`, `fopen`, `copy`, `file_get_contents`, `is_dir`, `is_file`, `stat`, `parse_ini_file` 等）处理 `phar://` 包装的路径时，**会自动**解析 Phar 文件结构，并**反序列化**存储在 Manifest 部分的元数据 (Metadata)。攻击者可以构造一个包含恶意序列化对象作为元数据的 Phar 文件，上传到服务器（或通过 SSRF 让服务器访问），然后通过文件操作函数触发反序列化。
 
-## 常见漏洞与利用技术 (Common Vulnerabilities & Exploitation Techniques)
+## 常见漏洞与利用技术
 
-### 1. 手动构造与私有属性控制 (Manual Construction & Private Property Control)
+### 1. 手动构造与私有属性控制
 
 *   **原理:** 直接修改序列化字符串，利用 `\0ClassName\0` 格式设置私有属性的值，可以绕过正常的访问控制，将预期之外的对象或值赋给私有属性，常用于 POP 链构造。
 *   **示例 (Level 1 - 了解调用链):**
@@ -27,7 +27,7 @@
             `O:5:"index":1:{s:11:"%00index%00test";O:4:"evil":1:{s:5:"test2";s:13:"system('ls');";}}` (空字节需 URL 编码)
     ![了解调用链 2](./images/ser2.png) (发送修改后的 Payload)
 
-### 2. POP 链构造实例 (POP Chain Construction Example)
+### 2. POP 链构造实例
 
 *   **原理:** 组合多个类的魔术方法调用，从反序列化触发点（如 `__wakeup`）开始，一步步传递控制流，最终到达包含危险操作（如 `include`）的 sink gadget。
 *   **示例 (Level 2 - POP链构造):**
@@ -60,7 +60,7 @@
     ![POP链构造 2](./images/ser4.png) (构造好的 Payload)
     ![POP链构造 3](./images/ser5.png) (获取 Flag)
 
-### 3. 字符串逃逸利用 (String Escape Exploitation)
+### 3. 字符串逃逸利用
 
 *   **原理:** 利用序列化前后字符串过滤/替换导致的长度不匹配，注入额外的序列化数据。
 *   **示例 (Level 3 - 字符串逃逸-增加):**
@@ -97,7 +97,7 @@
     ![字符串逃逸-减少 3](./images/ser11.jpeg) (获取 Flag)
     *   **关键:** 计算需要“吞噬”掉多少字符，通过 filter 长度减少来实现。
 
-### 4. `__wakeup` 绕过应用 (Bypass __wakeup Application)
+### 4. `__wakeup` 绕过应用
 
 *   **原理:** 利用 CVE-2016-7124，通过增加序列化字符串中声明的属性数量来跳过 `__wakeup` 的执行。
 *   **示例 (Level 5 - wakeup绕过):**
@@ -107,7 +107,7 @@
     ![weakup绕过 2](./images/ser13.png) (构造 Payload `O:+4:"Name":2:{...}`)
     ![weakup绕过 3](./images/ser14.png) (URL 编码后发送)
 
-### 5. 引用 (References in Serialization)
+### 5. 引用
 
 *   **原理:** PHP 序列化支持引用。当同一个对象或值在序列化流中多次出现时，第二次及以后可以用 `R:<index>;` 来引用第一次出现时的索引。这可以用来构造一些特殊的逻辑，例如让两个不同的属性指向同一个对象或值。
 *   **示例 (Level 6 - 引用):**
@@ -139,7 +139,7 @@
     ![引用 2](./images/ser16.png) (构造 Payload)
     ![引用 3](./images/ser17.png) (获取 Flag)
 
-### 6. Session 反序列化漏洞 (Session Deserialization Vulnerability)
+### 6. Session 反序列化漏洞
 
 *   **原理:** 利用不同 `session.serialize_handler` 对 Session 数据格式解析的差异。常见的是在 `php_serialize` 存储的页面注入数据，然后在 `php` 读取的页面触发反序列化。
 *   **利用流程 (php_serialize -> php):**
@@ -162,7 +162,7 @@
     ![session反序列化2 2](./images/ser22.png) 
     ![session反序列化2 3](./images/ser23.png) (构造带引用的 Payload)
 
-### 7. Phar 反序列化漏洞 (Phar Deserialization Vulnerability)
+### 7. Phar 反序列化漏洞
 
 *   **原理:** 利用 `phar://` 伪协议处理过程中的自动元数据反序列化特性，结合文件操作函数触发。
 *   **利用流程:**

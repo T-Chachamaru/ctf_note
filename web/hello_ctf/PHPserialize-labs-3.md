@@ -1,3 +1,5 @@
+# PHPserialize-labs-3
+
 ## Level 1 - `create_function` 与可变函数的调用
 
 **代码分析:**
@@ -115,13 +117,13 @@ echo urlencode($b);
       * 包含一个文件上传字段 (`<input type="file" name="file">`)。
       * **关键:** 在同一个表单中，包含一个隐藏字段或通过 JavaScript 添加一个 POST 参数，其**名称**为 `PHP_SESSION_UPLOAD_PROGRESS`，其**值**设置为步骤 1 中构造的恶意序列化字符串。
     <!-- end list -->
-    ```html
+    ​```html
     <form action="http://target.com/upload.php" method="POST" enctype="multipart/form-data">
         <input type="hidden" name="PHP_SESSION_UPLOAD_PROGRESS" value="恶意序列化字符串在这里" />
         <input type="file" name="file" />
         <input type="submit" value="Upload" />
     </form>
-    ```
+    ​```
 3.  **发送请求 (或修改请求):**
       * 方法一：直接通过上述 HTML 页面提交表单。选择任意一个文件上传。PHP 在处理上传时会读取 `PHP_SESSION_UPLOAD_PROGRESS` 的值并写入 Session。
       * 方法二（如原笔记所述，更灵活）：

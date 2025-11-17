@@ -44,7 +44,7 @@
 
 ---
 
-### 4. `gopher://` 协议包装器 🐐
+### 4. `gopher://` 协议包装器
 
 **核心原理：**
 
@@ -104,7 +104,7 @@
 
 ---
 
-### 6. 302 重定向绕过 ↪️
+### 6. 302 重定向绕过
 
 **核心原理：**
 
@@ -121,7 +121,7 @@
 
 ---
 
-### 7. DNS 重绑定绕过 🔄
+### 7. DNS 重绑定绕过
 
 **核心原理：**
 
@@ -142,7 +142,7 @@ DNS 重绑定利用 DNS 记录的生存时间 (TTL) 值。攻击者控制一个 
 
 ---
 
-### 8. SSRF 到 XXE (XML 外部实体注入) 利用 📄
+### 8. SSRF 到 XXE (XML 外部实体注入) 利用
 
 **核心原理：**
 
@@ -168,7 +168,7 @@ gopher://<内部XXE服务IP>:<端口>/_POST /flag.php HTTP/1.1%0d%0AHost: <内�
 
 ---
 
-### 9. SSRF 到文件上传利用 📤
+### 9. SSRF 到文件上传利用
 
 **核心原理：**
 
@@ -223,7 +223,7 @@ gopher://<内部上传服务IP>:<端口>/_POST /flag.php HTTP/1.1%0d%0AHost: <�
 
 ---
 
-### 11. SSRF 到 MySQL：写入 Web Shell (文件输出) ✍️
+### 11. SSRF 到 MySQL：写入 Web Shell (文件输出)
 
 **核心原理：**
 
@@ -292,7 +292,7 @@ Content-Length: <JSP代码长度>
 
 ---
 
-### 13. SSRF 到 Redis：未授权写入 Web Shell (通过 RDB 备份) 💾
+### 13. SSRF 到 Redis：未授权写入 Web Shell (通过 RDB 备份)
 
 **核心原理：**
 
@@ -324,7 +324,7 @@ Content-Length: <JSP代码长度>
 
 ---
 
-### 14. SSRF 到 Redis：未授权写入 SSH 公钥 🔑
+### 14. SSRF 到 Redis：未授权写入 SSH 公钥
 
 **核心原理：**
 
@@ -357,7 +357,7 @@ Content-Length: <JSP代码长度>
 
 ---
 
-### 15. SSRF 到 Redis：未授权写入基于 Cron 的反弹 Shell 🕒
+### 15. SSRF 到 Redis：未授权写入基于 Cron 的反弹 Shell
 
 **核心原理：**
 

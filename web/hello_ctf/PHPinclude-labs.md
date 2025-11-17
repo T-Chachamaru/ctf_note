@@ -1,6 +1,6 @@
-# PHP 文件包含相关技术与绕过技巧
+# PHPinclude-labs
 
-## Level 1: PHP 封装协议 (Wrappers)
+## Level 1: PHP 封装协议
 
 PHP 提供了一些内置的 URL 风格的封装协议（wrappers），可用于结合文件系统函数（如 `include`, `require`, `file_get_contents` 等）实现不同的功能。
 
@@ -143,7 +143,7 @@ file_put_contents($_POST['filename'], $content); // User-controlled filename
 
 ---
 
-## Level 4: 日志文件包含 (Log File Inclusion)
+## Level 4: 日志文件包含
 
 当 `php://` 等封装协议被禁用或过滤时，包含日志文件是一种常见的获取 Shell 的方法。
 
@@ -163,7 +163,7 @@ file_put_contents($_POST['filename'], $content); // User-controlled filename
 
 ---
 
-## Level 5: Session 文件包含 (Session File Inclusion)
+## Level 5: Session 文件包含
 
 利用 Session 文件存储机制，将 Webshell 写入 Session 文件，然后包含该文件。
 
